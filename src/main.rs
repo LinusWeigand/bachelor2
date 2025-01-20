@@ -11,7 +11,7 @@ use parquet::{
 use tokio::fs::File;
 
 const INPUT_FILE_NAME: &str = "output.parquet";
-const MEMORY_MEAN: f64 = 6729298150.;
+const MEMORY_MEAN: f64 = 67292981500.;
 const COLUMN_NAME: &str = "memoryUsed";
 static SELECT_INDICES: [usize; 3] = [0, 1, 3];
 
@@ -21,6 +21,19 @@ pub enum Comparison {
     Equal,
     GreaterThanOrEqual,
     GreaterThan
+}
+
+impl Comparison {
+    pub fn from_str(input: &str) -> Option<Self> {
+        match input {
+            "<" => Some(Comparison::LessThan),
+            "<=" => Some(Comparison::LessThanOrEqual),
+            "==" => Some(Comparison::Equal),
+            ">=" => Some(Comparison::GreaterThanOrEqual),
+            ">" => Some(Comparison::GreaterThan),
+            _ => None,
+        }
+    }
 }
 
 pub struct Condition {
@@ -88,22 +101,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
     };
 
-    let condition1 = Condition{
-        column_name: COLUMN_NAME.to_owned(),
-        threshold: MEMORY_MEAN,
-        comparison: Comparison::GreaterThan
-    };
-
-    let condition2 = Condition{
-        column_name: COLUMN_NAME.to_owned(),
-        threshold: MEMORY_MEAN,
-        comparison: Comparison::GreaterThan
-    };
-
-    let expression = Expression::And(
-        Box::new(Expression::Condition(condition1)),
-        Box::new(Expression::Condition(condition2))
-    );
+    let input = format!("({} < {})", 
+        COLUMN_NAME,
+        MEMORY_MEAN,
+        );
+    let expression = parse_expression(&input)?;
 
     let _result = smart_query_parquet_gt(&metadata_entry, &expression).await?;
     Ok(())
@@ -228,4 +230,110 @@ fn bytes_to_value(bytes: &[u8], column_type: &str) -> Result<f64, Box<dyn Error>
         }
         _ => Err(format!("Unsupported column type: {}", column_type).into()),
     }
+}
+
+fn parse_expression(input: &str) -> Result<Expression, Box<dyn Error>> {
+    let tokens = tokenize(input)?;
+    let mut pos = 0;
+    parse_or(&tokens, &mut pos)
+}
+
+fn tokenize(input: &str) -> Result<Vec<String>, Box<dyn Error>> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+
+    for c in input.chars() {
+        match c {
+            '(' | ')' | ' ' => {
+                if !current.is_empty() {
+                    tokens.push(current.clone());
+                    current.clear();
+                }
+                if c != ' ' {
+                    tokens.push(c.to_string());
+                }
+            }
+            _ => current.push(c),
+        }
+    }
+
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+
+    Ok(tokens)
+}
+
+fn parse_or(tokens: &[String], pos: &mut usize) -> Result<Expression, Box<dyn Error>> {
+    let mut expr = parse_and(tokens, pos)?;
+
+    while *pos < tokens.len() && tokens[*pos] == "OR" {
+        *pos += 1;
+        let right = parse_and(tokens, pos)?;
+        expr = Expression::Or(Box::new(expr), Box::new(right));
+    }
+
+    Ok(expr)
+}
+
+fn parse_and(tokens: &[String], pos: &mut usize) -> Result<Expression, Box<dyn Error>> {
+    let mut expr = parse_not(tokens, pos)?;
+
+    while *pos < tokens.len() && tokens[*pos] == "AND" {
+        *pos += 1;
+        let right = parse_not(tokens, pos)?;
+        expr = Expression::And(Box::new(expr), Box::new(right));
+    }
+
+    Ok(expr)
+}
+
+fn parse_not(tokens: &[String], pos: &mut usize) -> Result<Expression, Box<dyn Error>> {
+    if *pos < tokens.len() && tokens[*pos] == "NOT" {
+        *pos += 1;
+        let expr = parse_primary(tokens, pos)?;
+        return Ok(Expression::Not(Box::new(expr)));
+    }
+
+    parse_primary(tokens, pos)
+}
+
+fn parse_primary(tokens: &[String], pos: &mut usize) -> Result<Expression, Box<dyn Error>> {
+    if *pos >= tokens.len() {
+        return Err("Unexpected end of input".into());
+    }
+
+    if tokens[*pos] == "(" {
+        *pos += 1;
+        let expr = parse_or(tokens, pos)?;
+        if *pos >= tokens.len() || tokens[*pos] != ")" {
+            return Err("Expected closing parenthesis".into());
+        }
+        *pos += 1;
+        return Ok(expr);
+    }
+
+    // Parse condition
+    let column_name = tokens[*pos].clone();
+    *pos += 1;
+
+    if *pos >= tokens.len() {
+        return Err("Expected comparison operator".into());
+    }
+
+    let comparison = Comparison::from_str(&tokens[*pos]).ok_or("Invalid comparison operator")?;
+    *pos += 1;
+
+    if *pos >= tokens.len() {
+        return Err("Expected threshold value".into());
+    }
+
+    let threshold: f64 = tokens[*pos].parse()?;
+    *pos += 1;
+
+    Ok(Expression::Condition(Condition {
+        column_name,
+        comparison,
+        threshold,
+    }))
 }
