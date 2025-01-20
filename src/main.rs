@@ -12,7 +12,7 @@ use tokio::fs::File;
 
 const INPUT_FILE_NAME: &str = "output.parquet";
 const MEMORY_MEAN: f64 = 6729298150.;
-const COL_NAME: &str = "memoryUsed";
+const COLUMN_NAME: &str = "memoryUsed";
 static SELECT_INDICES: [usize; 3] = [0, 1, 3];
 
 pub enum Comparison {
@@ -30,7 +30,7 @@ pub struct Condition {
 } 
 
 pub enum Expression {
-    Comparison(Comparison),
+    Condition(Condition),
     And(Box<Expression>, Box<Expression>),
     Or(Box<Expression>, Box<Expression>),
     Not(Box<Expression>),
@@ -88,15 +88,30 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
     };
 
-    let _result = smart_query_parquet_gt(COL_NAME, MEMORY_MEAN, &metadata_entry, Comparison::GreaterThan).await?;
+    let condition1 = Condition{
+        column_name: COLUMN_NAME.to_owned(),
+        threshold: MEMORY_MEAN,
+        comparison: Comparison::GreaterThan
+    };
+
+    let condition2 = Condition{
+        column_name: COLUMN_NAME.to_owned(),
+        threshold: MEMORY_MEAN,
+        comparison: Comparison::GreaterThan
+    };
+
+    let expression = Expression::And(
+        Box::new(Expression::Condition(condition1)),
+        Box::new(Expression::Condition(condition2))
+    );
+
+    let _result = smart_query_parquet_gt(&metadata_entry, &expression).await?;
     Ok(())
 }
 
 pub async fn smart_query_parquet_gt(
-    col_name: &str,
-    threshold: f64,
     metadata_entry: &MetadataEntry,
-    comparison: Comparison,
+    expression: &Expression,
 ) -> Result<RecordBatch, Box<dyn Error>> {
     let file = File::open(&metadata_entry.file_path).await?;
 
@@ -110,7 +125,7 @@ pub async fn smart_query_parquet_gt(
 
     for i in 0..metadata.num_row_groups() {
         let row_group_metadata = metadata.row_group(i);
-        if !can_skip_row_group(row_group_metadata, col_name, threshold, &comparison)? {
+        if !can_skip_row_group(row_group_metadata, expression)? {
             row_groups.push(i);
         }
     }
@@ -151,30 +166,33 @@ pub async fn get_next_item_from_reader(
 
 pub fn can_skip_row_group(
     row_group: &RowGroupMetaData,
-    column_name: &str,
-    threshold: f64,
-    comparison: &Comparison,
+    expression: &Expression,
 ) -> Result<bool, Box<dyn Error>> {
-    if let Some(column) = row_group
-        .columns()
-        .iter()
-        .find(|c| c.column_path().string() == column_name)
-    {
-        let column_type = column.column_type().to_string();
-        if let Some(stats) = column.statistics() {
-            if let (Some(min_bytes), Some(max_bytes)) = (stats.min_bytes_opt(), stats.max_bytes_opt()) {
-                let min_value = bytes_to_value(min_bytes, &column_type)?;
-                let max_value = bytes_to_value(max_bytes, &column_type)?;
-                println!("Min value: {}", min_value);
-                println!("Max value: {}", max_value);
-
-                let result = comparison.can_skip(min_value, max_value, threshold);
-                println!("Comparison Result: {}", result);
-                return Ok(result);
+    match expression {
+        Expression::Condition(condition) => {
+            if let Some(column) = row_group
+                .columns()
+                .iter()
+                .find(|c| c.column_path().string() == condition.column_name)
+            {
+                let column_type = column.column_type().to_string();
+                if let Some(stats) = column.statistics() {
+                    if let (Some(min_bytes), Some(max_bytes)) = (stats.min_bytes_opt(), stats.max_bytes_opt()) {
+                        let min_value = bytes_to_value(min_bytes, &column_type)?;
+                        let max_value = bytes_to_value(max_bytes, &column_type)?;
+                        let threshold = condition.threshold;
+                        let result = condition.comparison.can_skip(min_value, max_value, threshold);
+                        return Ok(result);
+                    }
+                }
             }
-        }
+            //TODO: return Err?
+            Ok(false)
+        },
+        Expression::And(left, right) => Ok(can_skip_row_group(row_group, left)? && can_skip_row_group(row_group, right)?),
+        Expression::Or(left, right) => Ok(can_skip_row_group(row_group, left)? || can_skip_row_group(row_group, right)?),
+        Expression::Not(inner) => Ok(!can_skip_row_group(row_group, inner)?),
     }
-    Err("Statistics not found".into())
 }
 
 
