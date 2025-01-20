@@ -4,7 +4,8 @@ use arrow::array::RecordBatch;
 use futures::StreamExt;
 use parquet::{
     arrow::{
-        arrow_reader::ArrowReaderMetadata, async_reader::ParquetRecordBatchStream, ParquetRecordBatchStreamBuilder, ProjectionMask
+        arrow_reader::ArrowReaderMetadata, async_reader::ParquetRecordBatchStream,
+        ParquetRecordBatchStreamBuilder, ProjectionMask,
     },
     file::metadata::RowGroupMetaData,
 };
@@ -20,7 +21,7 @@ pub enum Comparison {
     LessThanOrEqual,
     Equal,
     GreaterThanOrEqual,
-    GreaterThan
+    GreaterThan,
 }
 
 impl Comparison {
@@ -40,7 +41,7 @@ pub struct Condition {
     pub column_name: String,
     pub threshold: f64,
     pub comparison: Comparison,
-} 
+}
 
 pub enum Expression {
     Condition(Condition),
@@ -87,7 +88,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let metadata_entry = cached_metadata
         .iter()
         .find(|entry| entry.file_path == file_path);
-    
+
     let metadata_entry = match metadata_entry {
         Some(v) => v,
         None => {
@@ -101,10 +102,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
     };
 
-    let input = format!("({} < {})", 
-        COLUMN_NAME,
-        MEMORY_MEAN,
-        );
+    let input = format!(
+        "{} == {} AND {} == {}",
+        COLUMN_NAME, 30_000_000 as i64, COLUMN_NAME, 100_000_000_000 as i64,
+    );
+
     let expression = parse_expression(&input)?;
 
     let _result = smart_query_parquet_gt(&metadata_entry, &expression).await?;
@@ -127,7 +129,9 @@ pub async fn smart_query_parquet_gt(
 
     for i in 0..metadata.num_row_groups() {
         let row_group_metadata = metadata.row_group(i);
-        if !can_skip_row_group(row_group_metadata, expression)? {
+        let is_skip = can_skip_row_group(row_group_metadata, expression)?;
+        println!("Row Group: {}, Skip: {}", i, is_skip);
+        if !is_skip {
             row_groups.push(i);
         }
     }
@@ -179,24 +183,31 @@ pub fn can_skip_row_group(
             {
                 let column_type = column.column_type().to_string();
                 if let Some(stats) = column.statistics() {
-                    if let (Some(min_bytes), Some(max_bytes)) = (stats.min_bytes_opt(), stats.max_bytes_opt()) {
+                    if let (Some(min_bytes), Some(max_bytes)) =
+                        (stats.min_bytes_opt(), stats.max_bytes_opt())
+                    {
                         let min_value = bytes_to_value(min_bytes, &column_type)?;
                         let max_value = bytes_to_value(max_bytes, &column_type)?;
                         let threshold = condition.threshold;
-                        let result = condition.comparison.can_skip(min_value, max_value, threshold);
+                        let result = condition
+                            .comparison
+                            .can_skip(min_value, max_value, threshold);
                         return Ok(result);
                     }
                 }
             }
             //TODO: return Err?
             Ok(false)
-        },
-        Expression::And(left, right) => Ok(can_skip_row_group(row_group, left)? && can_skip_row_group(row_group, right)?),
-        Expression::Or(left, right) => Ok(can_skip_row_group(row_group, left)? || can_skip_row_group(row_group, right)?),
+        }
+        Expression::And(left, right) => {
+            Ok(can_skip_row_group(row_group, left)? && can_skip_row_group(row_group, right)?)
+        }
+        Expression::Or(left, right) => {
+            Ok(can_skip_row_group(row_group, left)? || can_skip_row_group(row_group, right)?)
+        }
         Expression::Not(inner) => Ok(!can_skip_row_group(row_group, inner)?),
     }
 }
-
 
 fn bytes_to_value(bytes: &[u8], column_type: &str) -> Result<f64, Box<dyn Error>> {
     match column_type {

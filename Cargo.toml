@@ -21,3 +21,7 @@ path = "src/more_row_groups.rs"
 [[bin]]
 name = "parse"
 path = "src/parse.rs"
+
+[[bin]]
+name = "metadata"
+path = "src/metadata.rs"
