@@ -38,8 +38,14 @@ impl Comparison {
 
 pub struct Condition {
     pub column_name: String,
-    pub threshold: f64,
+    pub threshold: ThresholdValue,
     pub comparison: Comparison,
+}
+
+pub enum ThresholdValue {
+    Number(f64),
+    Utf8String(String),
+    DateTime(chrono::NaiveDateTime),
 }
 
 pub enum Expression {
@@ -50,13 +56,47 @@ pub enum Expression {
 }
 
 impl Comparison {
-    pub fn keep(&self, min_value: f64, max_value: f64, threshold: f64) -> bool {
-        match self {
-            Comparison::LessThan => min_value < threshold,
-            Comparison::LessThanOrEqual => min_value <= threshold,
-            Comparison::Equal => threshold >= min_value && threshold <= max_value,
-            Comparison::GreaterThanOrEqual => max_value >= threshold,
-            Comparison::GreaterThan => max_value > threshold,
+    pub fn keep(
+        &self,
+        row_group_min: &ThresholdValue,
+        row_group_max: &ThresholdValue,
+        user_threshold: &ThresholdValue,
+    ) -> bool {
+        match (row_group_min, row_group_max, user_threshold) {
+            (
+                ThresholdValue::Number(min),
+                ThresholdValue::Number(max),
+                ThresholdValue::Number(threshold),
+            ) => match self {
+                Comparison::LessThan => *min < *threshold,
+                Comparison::LessThanOrEqual => *min <= *threshold,
+                Comparison::Equal => *threshold >= *min && *threshold <= *max,
+                Comparison::GreaterThanOrEqual => *max >= *threshold,
+                Comparison::GreaterThan => *max > *threshold,
+            },
+            (
+                ThresholdValue::Utf8String(min),
+                ThresholdValue::Utf8String(max),
+                ThresholdValue::Utf8String(threshold),
+            ) => match self {
+                Comparison::LessThan => min < threshold,
+                Comparison::LessThanOrEqual => min <= threshold,
+                Comparison::Equal => threshold >= min && threshold <= max,
+                Comparison::GreaterThanOrEqual => max >= threshold,
+                Comparison::GreaterThan => max > threshold,
+            },
+            (
+                ThresholdValue::DateTime(min),
+                ThresholdValue::DateTime(max),
+                ThresholdValue::DateTime(threshold),
+            ) => match self {
+                Comparison::LessThan => *min < *threshold,
+                Comparison::LessThanOrEqual => *min <= *threshold,
+                Comparison::Equal => *threshold >= *min && *threshold <= *max,
+                Comparison::GreaterThanOrEqual => *max >= *threshold,
+                Comparison::GreaterThan => *max > *threshold,
+            },
+            _ => true,
         }
     }
 }
@@ -108,12 +148,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
     };
 
-    // let input = format!(
-    //     "{} == {} AND {} == {}",
-    //     COLUMN_NAME, 30_000_000 as i64, COLUMN_NAME, 100_000_000_000 as i64,
-    // );
+    let input = format!(
+        "{} == {} AND {} == {}",
+        COLUMN_NAME, 30_000_000 as i64, COLUMN_NAME, 100_000_000_000 as i64,
+    );
     //
-    let input = format!("endTime < 2018-03-02 14:23:41");
+    let input = format!("endTime < 2018-03-02-14:23:41");
     let expression = parse_expression(&input)?;
 
     let select_columns = vec!["memoryUsed".to_owned()];
@@ -202,8 +242,10 @@ pub fn keep_row_group(
                     {
                         let min_value = bytes_to_value(min_bytes, &column_type)?;
                         let max_value = bytes_to_value(max_bytes, &column_type)?;
-                        let threshold = condition.threshold;
-                        let result = condition.comparison.keep(min_value, max_value, threshold);
+                        let result =
+                            condition
+                                .comparison
+                                .keep(&min_value, &max_value, &condition.threshold);
                         return Ok(result);
                     }
                 }
@@ -221,15 +263,6 @@ pub fn keep_row_group(
     }
 }
 
-fn get_filter_column_name(expression: &Expression) -> String {
-    match expression {
-        Expression::Condition(condition) => condition.column_name.clone(),
-        Expression::And(left, _) => get_filter_column_name(left),
-        Expression::Or(left, _) => get_filter_column_name(left),
-        Expression::Not(inner) => get_filter_column_name(inner),
-    }
-}
-
 pub fn get_column_name_to_index_map(metadata: &FileMetaData) -> HashMap<String, usize> {
     metadata
         .schema_descr()
@@ -240,35 +273,43 @@ pub fn get_column_name_to_index_map(metadata: &FileMetaData) -> HashMap<String, 
         .collect()
 }
 
-fn bytes_to_value(bytes: &[u8], column_type: &str) -> Result<f64, Box<dyn Error>> {
+fn bytes_to_value(bytes: &[u8], column_type: &str) -> Result<ThresholdValue, Box<dyn Error>> {
     match column_type {
         "INT32" => {
             if bytes.len() != 4 {
                 return Err("Expected 4 bytes for INT32".into());
             }
             let int_value = i32::from_le_bytes(bytes.try_into()?);
-            Ok(int_value as f64)
+            Ok(ThresholdValue::Number(int_value as f64))
         }
         "INT64" => {
             if bytes.len() != 8 {
                 return Err("Expected 8 bytes for INT64".into());
             }
             let int_value = i64::from_le_bytes(bytes.try_into()?);
-            Ok(int_value as f64)
+            Ok(ThresholdValue::Number(int_value as f64))
         }
         "FLOAT" => {
             if bytes.len() != 4 {
                 return Err("Expected 4 bytes for FLOAT".into());
             }
             let float_value = f32::from_le_bytes(bytes.try_into()?);
-            Ok(float_value as f64)
+            Ok(ThresholdValue::Number(float_value as f64))
         }
         "DOUBLE" => {
             if bytes.len() != 8 {
                 return Err("Expected 8 bytes for DOUBLE".into());
             }
             let double_value = f64::from_le_bytes(bytes.try_into()?);
-            Ok(double_value)
+            Ok(ThresholdValue::Number(double_value))
+        }
+        "BYTE_ARRAY" => {
+            use std::str;
+            let s = str::from_utf8(bytes)?.to_owned();
+            // Now decide if we want to keep it as raw string or parse as date...
+            // For a purely textual column, store as string:
+            // TODO
+            Ok(ThresholdValue::Utf8String(s))
         }
         _ => Err(format!("Unsupported column type: {}", column_type).into()),
     }
@@ -370,12 +411,27 @@ fn parse_primary(tokens: &[String], pos: &mut usize) -> Result<Expression, Box<d
         return Err("Expected threshold value".into());
     }
 
-    let threshold: f64 = tokens[*pos].parse()?;
+    // let threshold: f64 = tokens[*pos].parse()?;
+    // *pos += 1;
+
+    let threshold_token = &tokens[*pos];
     *pos += 1;
+
+    let threshold = if let Ok(num) = threshold_token.parse::<f64>() {
+        ThresholdValue::Number(num)
+    } else if let Ok(datetime) = parse_iso_datetime(threshold_token) {
+        ThresholdValue::DateTime(datetime)
+    } else {
+        ThresholdValue::Utf8String(threshold_token.to_owned())
+    };
 
     Ok(Expression::Condition(Condition {
         column_name,
         comparison,
         threshold,
     }))
+}
+
+fn parse_iso_datetime(s: &str) -> Result<chrono::NaiveDateTime, chrono::ParseError> {
+    chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d-%H:%M:%S")
 }
