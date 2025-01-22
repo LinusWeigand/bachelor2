@@ -25,3 +25,7 @@ path = "src/parse.rs"
 [[bin]]
 name = "metadata"
 path = "src/metadata.rs"
+
+[[bin]]
+name = "test"
+path = "src/test.rs"

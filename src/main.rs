@@ -1,4 +1,4 @@
-use std::{error::Error, path::PathBuf, pin::Pin};
+use std::{collections::HashMap, error::Error, path::PathBuf, pin::Pin};
 
 use arrow::array::RecordBatch;
 use futures::StreamExt;
@@ -7,15 +7,14 @@ use parquet::{
         arrow_reader::ArrowReaderMetadata, async_reader::ParquetRecordBatchStream,
         ParquetRecordBatchStreamBuilder, ProjectionMask,
     },
-    file::metadata::RowGroupMetaData,
+    file::metadata::{FileMetaData, RowGroupMetaData},
 };
 use tokio::fs::File;
 
 const INPUT_FILE_NAME: &str = "output.parquet";
-const MEMORY_MEAN: f64 = 67292981500.;
 const COLUMN_NAME: &str = "memoryUsed";
-static SELECT_INDICES: [usize; 3] = [0, 1, 3];
 
+#[derive(PartialEq)]
 pub enum Comparison {
     LessThan,
     LessThanOrEqual,
@@ -51,13 +50,13 @@ pub enum Expression {
 }
 
 impl Comparison {
-    pub fn can_skip(&self, min_value: f64, max_value: f64, threshold: f64) -> bool {
+    pub fn keep(&self, min_value: f64, max_value: f64, threshold: f64) -> bool {
         match self {
-            Comparison::LessThan => threshold < min_value,
-            Comparison::LessThanOrEqual => threshold <= min_value,
-            Comparison::Equal => !(threshold >= min_value && threshold <= max_value),
-            Comparison::GreaterThanOrEqual => threshold >= max_value,
-            Comparison::GreaterThan => threshold > max_value,
+            Comparison::LessThan => min_value < threshold,
+            Comparison::LessThanOrEqual => min_value <= threshold,
+            Comparison::Equal => threshold >= min_value && threshold <= max_value,
+            Comparison::GreaterThanOrEqual => max_value >= threshold,
+            Comparison::GreaterThan => max_value > threshold,
         }
     }
 }
@@ -65,6 +64,7 @@ impl Comparison {
 pub struct MetadataEntry {
     file_path: PathBuf,
     metadata: ArrowReaderMetadata,
+    column_index_map: HashMap<String, usize>,
 }
 
 #[tokio::main]
@@ -75,10 +75,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let file_path = PathBuf::from(INPUT_FILE_NAME);
     let mut file = File::open(&file_path).await?;
     let metadata = ArrowReaderMetadata::load_async(&mut file, Default::default()).await?;
+    let file_metadata = metadata.metadata().file_metadata();
+    let column_index_map = get_column_name_to_index_map(&file_metadata);
 
     let metadata_entry = MetadataEntry {
         file_path,
         metadata,
+        column_index_map,
     };
 
     cached_metadata.push(metadata_entry);
@@ -94,28 +97,35 @@ async fn main() -> Result<(), Box<dyn Error>> {
         None => {
             let mut file = File::open(&file_path).await?;
             let metadata = ArrowReaderMetadata::load_async(&mut file, Default::default()).await?;
+            let file_metadata = metadata.metadata().file_metadata();
+            let column_index_map = get_column_name_to_index_map(&file_metadata);
             //TODO: Insert into cache
             &MetadataEntry {
                 file_path,
                 metadata,
+                column_index_map,
             }
         }
     };
 
-    let input = format!(
-        "{} == {} AND {} == {}",
-        COLUMN_NAME, 30_000_000 as i64, COLUMN_NAME, 100_000_000_000 as i64,
-    );
-
+    // let input = format!(
+    //     "{} == {} AND {} == {}",
+    //     COLUMN_NAME, 30_000_000 as i64, COLUMN_NAME, 100_000_000_000 as i64,
+    // );
+    //
+    let input = format!("endTime < 2018-03-02 14:23:41");
     let expression = parse_expression(&input)?;
 
-    let _result = smart_query_parquet_gt(&metadata_entry, &expression).await?;
+    let select_columns = vec!["memoryUsed".to_owned()];
+
+    let _result = smart_query_parquet(&metadata_entry, &expression, &select_columns).await?;
     Ok(())
 }
 
-pub async fn smart_query_parquet_gt(
+pub async fn smart_query_parquet(
     metadata_entry: &MetadataEntry,
     expression: &Expression,
+    select_columns: &Vec<String>,
 ) -> Result<RecordBatch, Box<dyn Error>> {
     let file = File::open(&metadata_entry.file_path).await?;
 
@@ -123,15 +133,19 @@ pub async fn smart_query_parquet_gt(
     let builder = ParquetRecordBatchStreamBuilder::new_with_metadata(file, metadata.clone());
     let metadata = metadata.metadata();
 
-    let _mask = ProjectionMask::roots(metadata.file_metadata().schema_descr(), SELECT_INDICES);
+    let column_indices: Vec<usize> = select_columns
+        .iter()
+        .filter_map(|column| metadata_entry.column_index_map.get(column).map(|&x| x))
+        .collect();
+    let mask = ProjectionMask::roots(metadata.file_metadata().schema_descr(), column_indices);
 
     let mut row_groups: Vec<usize> = Vec::new();
 
     for i in 0..metadata.num_row_groups() {
         let row_group_metadata = metadata.row_group(i);
-        let is_skip = can_skip_row_group(row_group_metadata, expression)?;
-        println!("Row Group: {}, Skip: {}", i, is_skip);
-        if !is_skip {
+        let is_keep = keep_row_group(row_group_metadata, expression)?;
+        println!("Row Group: {}, Skip: {}", i, is_keep);
+        if is_keep {
             row_groups.push(i);
         }
     }
@@ -141,9 +155,9 @@ pub async fn smart_query_parquet_gt(
     // let row_filter = RowFilter::new();
 
     let mut stream = builder
-        // .with_projection(mask)
+        .with_projection(mask)
         .with_row_groups(row_groups)
-        // .with_row_filter(row_filter)
+        // .with_row_filter(RowFi)
         .build()?;
     let mut pinned_stream = Pin::new(&mut stream);
 
@@ -170,7 +184,7 @@ pub async fn get_next_item_from_reader(
     }
 }
 
-pub fn can_skip_row_group(
+pub fn keep_row_group(
     row_group: &RowGroupMetaData,
     expression: &Expression,
 ) -> Result<bool, Box<dyn Error>> {
@@ -189,24 +203,41 @@ pub fn can_skip_row_group(
                         let min_value = bytes_to_value(min_bytes, &column_type)?;
                         let max_value = bytes_to_value(max_bytes, &column_type)?;
                         let threshold = condition.threshold;
-                        let result = condition
-                            .comparison
-                            .can_skip(min_value, max_value, threshold);
+                        let result = condition.comparison.keep(min_value, max_value, threshold);
                         return Ok(result);
                     }
                 }
             }
-            //TODO: return Err?
             Ok(false)
         }
+        //
         Expression::And(left, right) => {
-            Ok(can_skip_row_group(row_group, left)? && can_skip_row_group(row_group, right)?)
+            Ok(keep_row_group(row_group, left)? && keep_row_group(row_group, right)?)
         }
         Expression::Or(left, right) => {
-            Ok(can_skip_row_group(row_group, left)? || can_skip_row_group(row_group, right)?)
+            Ok(keep_row_group(row_group, left)? || keep_row_group(row_group, right)?)
         }
-        Expression::Not(inner) => Ok(!can_skip_row_group(row_group, inner)?),
+        Expression::Not(inner) => Ok(!keep_row_group(row_group, inner)?),
     }
+}
+
+fn get_filter_column_name(expression: &Expression) -> String {
+    match expression {
+        Expression::Condition(condition) => condition.column_name.clone(),
+        Expression::And(left, _) => get_filter_column_name(left),
+        Expression::Or(left, _) => get_filter_column_name(left),
+        Expression::Not(inner) => get_filter_column_name(inner),
+    }
+}
+
+pub fn get_column_name_to_index_map(metadata: &FileMetaData) -> HashMap<String, usize> {
+    metadata
+        .schema_descr()
+        .columns()
+        .iter()
+        .enumerate()
+        .map(|(i, column)| (column.path().to_string(), i))
+        .collect()
 }
 
 fn bytes_to_value(bytes: &[u8], column_type: &str) -> Result<f64, Box<dyn Error>> {

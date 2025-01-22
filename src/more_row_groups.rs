@@ -7,28 +7,23 @@ use parquet::{
         async_reader::ParquetRecordBatchStream, AsyncArrowWriter, ParquetRecordBatchStreamBuilder,
     },
     basic::Compression,
-    file::properties::WriterProperties,
+    file::properties::{EnabledStatistics, WriterProperties},
 };
 use tokio::fs::{File, OpenOptions};
 
 const INPUT_FILE: &str = "test.parquet";
 const OUTPUT_FILE: &str = "output.parquet";
 const ROWS_PER_GROUP: usize = 1024;
+const ROWS_PER_DATA_PAGE: usize = 128;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    let input_file = OpenOptions::new()
-        .read(true)
-        .write(false)
-        .append(false)
-        .create(false)
-        .open(INPUT_FILE)
-        .await?;
+    let input_file = File::open(INPUT_FILE).await?;
 
     let output_file = OpenOptions::new()
         .read(true)
         .write(true)
-        .append(false)
+        .truncate(true)
         .create(true)
         .open(OUTPUT_FILE)
         .await?;
@@ -59,6 +54,10 @@ pub async fn increase_row_groups(
     let props = WriterProperties::builder()
         .set_compression(Compression::SNAPPY)
         .set_max_row_group_size(ROWS_PER_GROUP)
+        .set_data_page_row_count_limit(ROWS_PER_DATA_PAGE)
+        .set_statistics_enabled(EnabledStatistics::Page)
+        .set_bloom_filter_enabled(true)
+        .set_bloom_filter_ndv(ROWS_PER_GROUP as u64)
         .build();
 
     let mut writer = AsyncArrowWriter::try_new(output_file, record_batch.schema(), Some(props))?;
