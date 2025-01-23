@@ -7,11 +7,11 @@ use parquet::{
 use query::MetadataEntry;
 use tokio::fs::{File, OpenOptions};
 
+pub mod query;
 mod bloom_filter;
 mod more_row_groups;
-mod parse;
+pub mod parse;
 mod row_filter;
-pub mod query;
 
 const INPUT_FILE_NAME: &str = "output.parquet";
 const COLUMN_NAME: &str = "memoryUsed";

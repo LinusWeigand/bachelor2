@@ -109,7 +109,7 @@ pub async fn smart_query_parquet(
     bloom_filters: Vec<Vec<Option<BloomFilter>>>,
     expression: &Expression,
     select_columns: &Vec<String>,
-) -> Result<RecordBatch, Box<dyn Error>> {
+) -> Result<Vec<RecordBatch>, Box<dyn Error>> {
     let file = File::open(&metadata_entry.file_path).await?;
 
     let metadata = metadata_entry.metadata.clone();
@@ -149,9 +149,9 @@ pub async fn smart_query_parquet(
     let row_filter: RowFilter = RowFilter::new(predicates);
 
     let mut stream = builder
-        .with_projection(mask)
+        // .with_projection(mask)
         .with_row_groups(row_groups)
-        .with_row_filter(row_filter)
+        // .with_row_filter(row_filter)
         .build()?;
     let mut pinned_stream = Pin::new(&mut stream);
 
@@ -161,8 +161,14 @@ pub async fn smart_query_parquet(
         return Err("File is empty".into());
     }
     let record_batch = record_batch.unwrap();
+    let mut result = Vec::new();
+    result.push(record_batch);
 
-    Ok(record_batch)
+    while let Some(record_batch) = get_next_item_from_reader(&mut pinned_stream).await {
+        result.push(record_batch);
+    }
+
+    Ok(result)
 }
 
 pub async fn get_next_item_from_reader(

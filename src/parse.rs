@@ -1,6 +1,6 @@
+use crate::query::{Comparison, Condition, Expression, ThresholdValue};
 use std::error::Error;
 
-use crate::query::{Comparison, Condition, Expression, ThresholdValue};
 
 pub fn parse_expression(input: &str) -> Result<Expression, Box<dyn Error>> {
     let tokens = tokenize(input)?;

@@ -1,20 +1,27 @@
 use core::f32;
-use std::{error::Error, sync::Arc};
+use std::{error::Error, path::PathBuf, sync::Arc};
 
 use arrow::{
     array::{BooleanArray, Date64Array, Float32Array, Int64Array, RecordBatch, StringArray},
-    datatypes::{DataType, Field, Schema},
+    datatypes::{DataType, Field, Schema}, util::pretty::print_batches,
 };
 use parquet::{
-    arrow::AsyncArrowWriter,
+    arrow::{arrow_reader::ArrowReaderMetadata, AsyncArrowWriter},
     basic::Compression,
     file::properties::{EnabledStatistics, WriterProperties},
 };
-use tokio::fs::OpenOptions;
+
+use query::MetadataEntry;
+use tokio::fs::{File, OpenOptions};
 const ROWS_PER_GROUP: usize = 2;
-const OUTPUT_FILE_PATH: &str = "testing.parquet";
+const INPUT_FILE_PATH: &str = "testing_input.parquet";
+const OUTPUT_FILE_PATH: &str = "testing_output.parquet";
 
 mod parse;
+pub mod query;
+pub mod bloom_filter;
+pub mod row_filter;
+pub mod more_row_groups;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -22,7 +29,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .create(true)
         .truncate(true)
         .write(true)
-        .open(OUTPUT_FILE_PATH)
+        .open(INPUT_FILE_PATH)
         .await?;
 
     let props = WriterProperties::builder()
@@ -73,10 +80,43 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     writer.close().await?;
 
+    // Get Bloom Filters
+    let input_file = File::open(INPUT_FILE_PATH).await?;
+    let output_file = OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .create(true)
+        .open(OUTPUT_FILE_PATH)
+        .await?;
+
+    let bloom_filters =
+        more_row_groups::prepare_file(input_file, output_file, ROWS_PER_GROUP).await?;
+
+
+    // Get Metadata
+
+    let file_path = PathBuf::from(OUTPUT_FILE_PATH);
+    let mut file = File::open(&file_path).await?;
+    let metadata = ArrowReaderMetadata::load_async(&mut file, Default::default()).await?;
+    let file_metadata = metadata.metadata().file_metadata();
+    let column_index_map = query::get_column_name_to_index_map(&file_metadata);
+
+    let metadata_entry = MetadataEntry {
+        file_path,
+        metadata,
+        column_index_map,
+    };
+
     // Query
 
-    let input = "age > 25";
+    let input = "Age > 25";
     let expression = parse::parse_expression(input)?;
+
+    let select_columns = vec!["Name".to_owned()];
+    
+    let results = query::smart_query_parquet(&metadata_entry, bloom_filters, &expression, &select_columns).await?;
+
+    print_batches(&results)?;
 
     Ok(())
 }
