@@ -1,11 +1,15 @@
 use arrow::{
-    array::{Array, BooleanArray, BooleanBuilder, Date32Array, Date64Array, Float16Array, Float32Array, Float64Array, Int16Array, Int32Array, Int64Array, Int8Array, RecordBatch, StringArray, StringViewArray, UInt16Array, UInt32Array, UInt64Array, UInt8Array},
+    array::{
+        Array, BooleanArray, BooleanBuilder, Date32Array, Date64Array, Float16Array, Float32Array,
+        Float64Array, Int16Array, Int32Array, Int64Array, Int8Array, RecordBatch, StringArray,
+        StringViewArray, UInt16Array, UInt32Array, UInt64Array, UInt8Array,
+    },
     datatypes::DataType,
     error::ArrowError,
 };
 use std::collections::HashMap;
 
-use crate::{Comparison, Condition, Expression, ThresholdValue};
+use crate::query::{Comparison, Condition, Expression, ThresholdValue};
 
 pub fn predicate_function(
     expression: Expression,
@@ -78,18 +82,15 @@ fn evaluate_condition(
 
     match column.data_type() {
         DataType::Int8 => {
-            let col = column
-                .as_any()
-                .downcast_ref::<Int8Array>()
-                .ok_or_else(|| {
-                    ArrowError::SchemaError("Failed to downcast Int8Array".to_string())
-                })?;
+            let col = column.as_any().downcast_ref::<Int8Array>().ok_or_else(|| {
+                ArrowError::SchemaError("Failed to downcast Int8Array".to_string())
+            })?;
             if col.is_null(row_idx) {
-                return Ok(false); 
+                return Ok(false);
             }
-            let value = col.value(row_idx); 
+            let value = col.value(row_idx);
             compare_numeric(value as f64, &cond.comparison, &cond.threshold)
-        },
+        }
         DataType::Int16 => {
             let col = column
                 .as_any()
@@ -98,11 +99,11 @@ fn evaluate_condition(
                     ArrowError::SchemaError("Failed to downcast Int16Array".to_string())
                 })?;
             if col.is_null(row_idx) {
-                return Ok(false); 
+                return Ok(false);
             }
-            let value = col.value(row_idx); 
+            let value = col.value(row_idx);
             compare_numeric(value as f64, &cond.comparison, &cond.threshold)
-        },
+        }
         DataType::Int32 => {
             let col = column
                 .as_any()
@@ -111,11 +112,11 @@ fn evaluate_condition(
                     ArrowError::SchemaError("Failed to downcast Int32Array".to_string())
                 })?;
             if col.is_null(row_idx) {
-                return Ok(false); 
+                return Ok(false);
             }
-            let value = col.value(row_idx); 
+            let value = col.value(row_idx);
             compare_numeric(value as f64, &cond.comparison, &cond.threshold)
-        },
+        }
         DataType::Int64 => {
             let col = column
                 .as_any()
@@ -124,11 +125,11 @@ fn evaluate_condition(
                     ArrowError::SchemaError("Failed to downcast Int64Array".to_string())
                 })?;
             if col.is_null(row_idx) {
-                return Ok(false); 
-            } 
-            let value = col.value(row_idx); 
+                return Ok(false);
+            }
+            let value = col.value(row_idx);
             compare_numeric(value as f64, &cond.comparison, &cond.threshold)
-        },
+        }
         DataType::UInt8 => {
             let col = column
                 .as_any()
@@ -137,11 +138,11 @@ fn evaluate_condition(
                     ArrowError::SchemaError("Failed to downcast Int8Array".to_string())
                 })?;
             if col.is_null(row_idx) {
-                return Ok(false); 
+                return Ok(false);
             }
-            let value = col.value(row_idx); 
+            let value = col.value(row_idx);
             compare_numeric(value as f64, &cond.comparison, &cond.threshold)
-        },
+        }
         DataType::UInt16 => {
             let col = column
                 .as_any()
@@ -150,11 +151,11 @@ fn evaluate_condition(
                     ArrowError::SchemaError("Failed to downcast Int16Array".to_string())
                 })?;
             if col.is_null(row_idx) {
-                return Ok(false); 
+                return Ok(false);
             }
-            let value = col.value(row_idx); 
+            let value = col.value(row_idx);
             compare_numeric(value as f64, &cond.comparison, &cond.threshold)
-        },
+        }
         DataType::UInt32 => {
             let col = column
                 .as_any()
@@ -163,11 +164,11 @@ fn evaluate_condition(
                     ArrowError::SchemaError("Failed to downcast Int32Array".to_string())
                 })?;
             if col.is_null(row_idx) {
-                return Ok(false); 
+                return Ok(false);
             }
-            let value = col.value(row_idx); 
+            let value = col.value(row_idx);
             compare_numeric(value as f64, &cond.comparison, &cond.threshold)
-        },
+        }
         DataType::UInt64 => {
             let col = column
                 .as_any()
@@ -176,12 +177,12 @@ fn evaluate_condition(
                     ArrowError::SchemaError("Failed to downcast Int64Array".to_string())
                 })?;
             if col.is_null(row_idx) {
-                return Ok(false); 
+                return Ok(false);
             }
-            
-            let value = col.value(row_idx); 
+
+            let value = col.value(row_idx);
             compare_numeric(value as f64, &cond.comparison, &cond.threshold)
-        },
+        }
         DataType::Float16 => {
             let col = column
                 .as_any()
@@ -190,12 +191,12 @@ fn evaluate_condition(
                     ArrowError::SchemaError("Failed to downcast Int64Array".to_string())
                 })?;
             if col.is_null(row_idx) {
-                return Ok(false); 
+                return Ok(false);
             }
-            
-            let value = col.value(row_idx); 
+
+            let value = col.value(row_idx);
             compare_numeric(f64::from(value), &cond.comparison, &cond.threshold)
-        },
+        }
         DataType::Float32 => {
             let col = column
                 .as_any()
@@ -204,12 +205,12 @@ fn evaluate_condition(
                     ArrowError::SchemaError("Failed to downcast Int64Array".to_string())
                 })?;
             if col.is_null(row_idx) {
-                return Ok(false); 
+                return Ok(false);
             }
-            
-            let value = col.value(row_idx); 
+
+            let value = col.value(row_idx);
             compare_numeric(f64::from(value), &cond.comparison, &cond.threshold)
-        },
+        }
         DataType::Float64 => {
             let col = column
                 .as_any()
@@ -218,12 +219,12 @@ fn evaluate_condition(
                     ArrowError::SchemaError("Failed to downcast Int64Array".to_string())
                 })?;
             if col.is_null(row_idx) {
-                return Ok(false); 
+                return Ok(false);
             }
-            
-            let value = col.value(row_idx); 
+
+            let value = col.value(row_idx);
             compare_numeric(f64::from(value), &cond.comparison, &cond.threshold)
-        },
+        }
         DataType::Date32 => {
             let col = column
                 .as_any()
@@ -232,12 +233,12 @@ fn evaluate_condition(
                     ArrowError::SchemaError("Failed to downcast Int64Array".to_string())
                 })?;
             if col.is_null(row_idx) {
-                return Ok(false); 
+                return Ok(false);
             }
-            
-            let value = col.value(row_idx); 
+
+            let value = col.value(row_idx);
             compare_numeric(f64::from(value), &cond.comparison, &cond.threshold)
-        },
+        }
         DataType::Date64 => {
             let col = column
                 .as_any()
@@ -246,12 +247,12 @@ fn evaluate_condition(
                     ArrowError::SchemaError("Failed to downcast Int64Array".to_string())
                 })?;
             if col.is_null(row_idx) {
-                return Ok(false); 
+                return Ok(false);
             }
-            
-            let value = col.value(row_idx); 
+
+            let value = col.value(row_idx);
             compare_numeric(value as f64, &cond.comparison, &cond.threshold)
-        },
+        }
         DataType::Boolean => {
             let col = column
                 .as_any()
@@ -260,12 +261,12 @@ fn evaluate_condition(
                     ArrowError::SchemaError("Failed to downcast Int64Array".to_string())
                 })?;
             if col.is_null(row_idx) {
-                return Ok(false); 
+                return Ok(false);
             }
-            
-            let value = col.value(row_idx); 
+
+            let value = col.value(row_idx);
             compare_boolean(value, &cond.comparison, &cond.threshold)
-        },
+        }
         DataType::Utf8 => {
             let col = column
                 .as_any()
@@ -278,7 +279,7 @@ fn evaluate_condition(
             }
             let value = col.value(row_idx);
             compare_utf8(value, &cond.comparison, &cond.threshold)
-        },
+        }
         DataType::LargeUtf8 => {
             let col = column
                 .as_any()
@@ -291,7 +292,7 @@ fn evaluate_condition(
             }
             let value = col.value(row_idx);
             compare_utf8(value, &cond.comparison, &cond.threshold)
-        },
+        }
         DataType::Utf8View => {
             let col = column
                 .as_any()
@@ -304,10 +305,8 @@ fn evaluate_condition(
             }
             let value = col.value(row_idx);
             compare_utf8(value, &cond.comparison, &cond.threshold)
-        },
-        _ => {
-            Ok(false)
         }
+        _ => Ok(false),
     }
 }
 
@@ -324,7 +323,7 @@ fn compare_numeric(
             Comparison::GreaterThanOrEqual => Ok(row_value >= *n),
             Comparison::GreaterThan => Ok(row_value > *n),
         },
-        _ => Ok(false)
+        _ => Ok(false),
     }
 }
 
@@ -341,7 +340,7 @@ fn compare_utf8(
             Comparison::GreaterThanOrEqual => Ok(row_value >= s.as_str()),
             Comparison::GreaterThan => Ok(row_value > s.as_str()),
         },
-        _ => Ok(false)
+        _ => Ok(false),
     }
 }
 
@@ -358,7 +357,7 @@ fn compare_boolean(
             Comparison::GreaterThanOrEqual => Ok(row_value >= *n),
             Comparison::GreaterThan => Ok(row_value > *n),
         },
-        _ =>Ok(false)
+        _ => Ok(false),
     }
 }
 

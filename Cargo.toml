@@ -28,5 +28,5 @@ name = "metadata"
 path = "src/metadata.rs"
 
 [[bin]]
-name = "test"
-path = "src/test.rs"
+name = "testing"
+path = "src/testing.rs"

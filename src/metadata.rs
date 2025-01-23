@@ -1,6 +1,6 @@
 use std::{error::Error, path::PathBuf};
 
-use parquet::{arrow::arrow_reader::ArrowReaderMetadata, data_type::Int96, file::page_index::index::{Index, NativeIndex}};
+use parquet::arrow::arrow_reader::ArrowReaderMetadata;
 use tokio::fs::File;
 
 const INPUT_FILE_NAME: &str = "output.parquet";
@@ -13,14 +13,11 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
     let metadata = ArrowReaderMetadata::load_async(&mut file, Default::default()).await?;
     let metadata = metadata.metadata();
 
-    let index_pages = metadata.column_index().expect("No column index found");
-
     for (row_group_index, row_group) in metadata.row_groups().iter().enumerate() {
-        if let Some((column_index, column)) = row_group
+        if let Some(column) = row_group
             .columns()
             .iter()
-            .enumerate()
-            .find(|(_, c)| c.column_path().string() == COLUMN_NAME)
+            .find(|c| c.column_path().string() == COLUMN_NAME)
         {
             let column_type = column.column_type().to_string();
             if let Some(stats) = column.statistics() {
@@ -33,8 +30,6 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
                         "Row Group: {}, MIN: {}, MAX: {}",
                         row_group_index, min_value, max_value
                     );
-
-                    let page_index = &index_pages[row_group_index][column_index];
                 } else {
                     println!("No min or max values found");
                 }
@@ -46,74 +41,6 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
 
     println!("Finish");
     Ok(())
-}
-
-pub struct PageInfo {
-    min: f64,
-    max: f64,
-    range_start: u64,
-    range_length: u64,
-}
-
-pub fn get_values_from_page_index(page_index: &Index) -> Option<Vec<PageInfo>> {
-    match page_index {
-        Index::NONE | Index::BOOLEAN(_) | Index::BYTE_ARRAY(_) | Index::FIXED_LEN_BYTE_ARRAY(_) => None,
-        Index::INT32(v) => Some(
-            v.indexes
-                .iter()
-                .map(|idx| PageInfo {
-                    min: idx.min.expect("No min found") as f64,
-                    max: idx.max.expect("No max found") as f64,
-                    range_start: 0,
-                    range_length: 0,
-                })
-                .collect(),
-        ),
-        Index::INT64(v) => Some(
-            v.indexes
-                .iter()
-                .map(|idx| PageInfo {
-                    min: idx.min.expect("No min found") as f64,
-                    max: idx.max.expect("No max found") as f64,
-                    range_start: 0,
-                    range_length: 0,
-                })
-                .collect(),
-        ),
-        Index::FLOAT(v) => Some(
-            v.indexes
-                .iter()
-                .map(|idx| PageInfo {
-                    min: idx.min.expect("No min found") as f64,
-                    max: idx.max.expect("No max found") as f64,
-                    range_start: 0,
-                    range_length: 0,
-                })
-                .collect(),
-        ),
-        Index::DOUBLE(v) => Some(
-            v.indexes
-                .iter()
-                .map(|idx| PageInfo {
-                    min: idx.min.expect("No min found"),
-                    max: idx.max.expect("No max found"),
-                    range_start: 0,
-                    range_length: 0,
-                })
-                .collect(),
-        ),
-        Index::INT96(v) => Some(
-            v.indexes
-                .iter()
-                .map(|idx| PageInfo {
-                    min: idx.min.expect("No min found").to_i64() as f64,
-                    max: idx.max.expect("No max found").to_i64() as f64,
-                    range_start: 0,
-                    range_length: 0,
-                })
-                .collect(),
-        ),
-    }
 }
 
 fn bytes_to_value(bytes: &[u8], column_type: &str) -> Result<f64, Box<dyn Error>> {

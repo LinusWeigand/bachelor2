@@ -1,6 +1,6 @@
 use std::error::Error;
 
-use crate::{Comparison, Condition, Expression, ThresholdValue};
+use crate::query::{Comparison, Condition, Expression, ThresholdValue};
 
 pub fn parse_expression(input: &str) -> Result<Expression, Box<dyn Error>> {
     let tokens = tokenize(input)?;
@@ -97,9 +97,6 @@ pub fn parse_primary(tokens: &[String], pos: &mut usize) -> Result<Expression, B
     if *pos >= tokens.len() {
         return Err("Expected threshold value".into());
     }
-
-    // let threshold: f64 = tokens[*pos].parse()?;
-    // *pos += 1;
 
     let threshold_token = &tokens[*pos];
     *pos += 1;

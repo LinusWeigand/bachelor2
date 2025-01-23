@@ -1,6 +1,6 @@
-use std::{error::Error, io::{Seek, Write}, pin::Pin};
+use std::{error::Error, pin::Pin};
 
-use arrow::array::{Array, Int32Array, RecordBatch};
+use arrow::array::RecordBatch;
 use futures::StreamExt;
 use parquet::{
     arrow::{
@@ -62,11 +62,9 @@ pub async fn prepare_file(
     Ok(bloom_filters)
 }
 
-async fn get_bloom_filters_from_batch(
-    batch: &RecordBatch,
-) ->Vec<Option<BloomFilter>> {
+async fn get_bloom_filters_from_batch(batch: &RecordBatch) -> Vec<Option<BloomFilter>> {
     let num_cols = batch.num_columns();
-    
+
     let mut bloom_filters = Vec::with_capacity(num_cols);
 
     for col_index in 0..num_cols {
@@ -75,11 +73,11 @@ async fn get_bloom_filters_from_batch(
         let mut bloom_filter = BloomFilter::new(10_000, 3);
         let entry = match bloom_filter.populate_from_column(column) {
             Ok(_) => Some(bloom_filter),
-            Err(_) => None
+            Err(_) => None,
         };
         bloom_filters.insert(col_index, entry);
     }
-   bloom_filters
+    bloom_filters
 }
 
 async fn get_next_item_from_reader(
