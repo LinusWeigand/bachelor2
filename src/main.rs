@@ -5,17 +5,19 @@ use bloom_filter::BloomFilter;
 use futures::StreamExt;
 use parquet::{
     arrow::{
-        arrow_reader::{ArrowReaderMetadata, RowSelection},
+        arrow_reader::{ArrowPredicate, ArrowPredicateFn, ArrowReaderMetadata, RowFilter, RowSelection},
         async_reader::ParquetRecordBatchStream,
         ParquetRecordBatchStreamBuilder, ProjectionMask,
     },
     file::metadata::{FileMetaData, RowGroupMetaData},
 };
+use row_filter::predicate_function;
 use tokio::fs::{File, OpenOptions};
 
 mod bloom_filter;
 mod more_row_groups;
 mod parse;
+mod row_filter;
 
 const INPUT_FILE_NAME: &str = "output.parquet";
 const COLUMN_NAME: &str = "memoryUsed";
@@ -24,7 +26,7 @@ const INPUT_FILE: &str = "test.parquet";
 const OUTPUT_FILE: &str = "output.parquet";
 const ROWS_PER_GROUP: usize = 1024;
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Clone)]
 pub enum Comparison {
     LessThan,
     LessThanOrEqual,
@@ -46,24 +48,31 @@ impl Comparison {
     }
 }
 
+#[derive(Clone)]
 pub struct Condition {
     pub column_name: String,
     pub threshold: ThresholdValue,
     pub comparison: Comparison,
 }
 
-#[derive(Debug)]
+
+
+#[derive(Debug, Clone)]
 pub enum ThresholdValue {
     Number(f64),
+    Boolean(bool),
     Utf8String(String),
 }
 
+#[derive(Clone)]
 pub enum Expression {
     Condition(Condition),
     And(Box<Expression>, Box<Expression>),
     Or(Box<Expression>, Box<Expression>),
     Not(Box<Expression>),
 }
+
+
 
 impl Comparison {
     pub fn keep(
@@ -78,11 +87,21 @@ impl Comparison {
                 ThresholdValue::Number(max),
                 ThresholdValue::Number(threshold),
             ) => match self {
-                Comparison::LessThan => *min < *threshold,
-                Comparison::LessThanOrEqual => *min <= *threshold,
-                Comparison::Equal => *threshold >= *min && *threshold <= *max,
-                Comparison::GreaterThanOrEqual => *max >= *threshold,
-                Comparison::GreaterThan => *max > *threshold,
+                Comparison::LessThan => min < threshold,
+                Comparison::LessThanOrEqual => min <= threshold,
+                Comparison::Equal => threshold >= min && threshold <= max,
+                Comparison::GreaterThanOrEqual => max >= threshold,
+                Comparison::GreaterThan => max > threshold,
+            },(
+                ThresholdValue::Boolean(min),
+                ThresholdValue::Boolean(max),
+                ThresholdValue::Boolean(threshold),
+            ) => match self {
+                Comparison::LessThan => true,
+                Comparison::LessThanOrEqual => true,
+                Comparison::Equal => threshold == min || threshold == max,
+                Comparison::GreaterThanOrEqual => true,
+                Comparison::GreaterThan => true,
             },
             (
                 ThresholdValue::Utf8String(min),
@@ -176,6 +195,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+
+
 pub async fn smart_query_parquet(
     metadata_entry: &MetadataEntry,
     bloom_filters: Vec<Vec<Option<BloomFilter>>>,
@@ -207,17 +228,21 @@ pub async fn smart_query_parquet(
 
     println!("Filtered Row Groups: {}", row_groups.len());
 
-    // let row_filter = RowFilter::new();
-    let ranges = vec![5..10, 11..15];
+    let filter_columns: Vec<String> = get_column_projection_from_expression(expression);
+    let column_indices: Vec<usize> = filter_columns
+        .iter()
+        .filter_map(|column| metadata_entry.column_index_map.get(column).map(|&x| x))
+        .collect();
+    let projection = ProjectionMask::roots(metadata.file_metadata().schema_descr(), column_indices);
+    let predicate: Box<dyn ArrowPredicate> = Box::new(ArrowPredicateFn::new(projection, predicate_function(expression.clone())));
+    let predicates: Vec<Box<dyn ArrowPredicate>> = vec![predicate];
+    let row_filter: RowFilter = RowFilter::new(predicates);
+
 
     let mut stream = builder
         .with_projection(mask)
         .with_row_groups(row_groups)
-        .with_row_selection(RowSelection::from_consecutive_ranges(
-            ranges.into_iter(),
-            20,
-        ))
-        // .with_row_filter(RowFi)
+        .with_row_filter(row_filter)
         .build()?;
     let mut pinned_stream = Pin::new(&mut stream);
 
@@ -341,4 +366,26 @@ fn bytes_to_value(bytes: &[u8], column_type: &str) -> Result<ThresholdValue, Box
         }
         _ => Err(format!("Unsupported column type: {}", column_type).into()),
     }
+}
+
+pub fn get_column_projection_from_expression(expression: &Expression) -> Vec<String> {
+    let mut column_projection = Vec::new();
+
+    fn get_column_projection(expr: &Expression, cols: &mut Vec<String>) {
+        match expr {
+            Expression::Condition(cond) => {
+                if !cols.contains(&cond.column_name) {
+                    cols.push(cond.column_name.clone());
+                }
+            },
+            Expression::And(left, right) | Expression::Or(left, right) => {
+                get_column_projection(left, cols);
+                get_column_projection(right, cols);
+            },
+            Expression::Not(inner) => get_column_projection(inner, cols),
+        }
+    }
+
+    get_column_projection(expression, &mut column_projection);
+    column_projection
 }

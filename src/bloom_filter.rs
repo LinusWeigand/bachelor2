@@ -28,6 +28,7 @@ impl BloomFilter {
     pub fn contains(&self, item: &ThresholdValue) -> bool {
         match item {
             ThresholdValue::Number(value) => self.hash(&value.to_bits()).iter().all(|&index| self.bit_array[index]),
+            ThresholdValue::Boolean(value) => self.hash(&value).iter().all(|&index| self.bit_array[index]),
             ThresholdValue::Utf8String(value) => self.hash(value).iter().all(|&index| self.bit_array[index]),
         }
     }
