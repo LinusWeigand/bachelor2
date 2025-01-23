@@ -1,4 +1,5 @@
-1. data page skipping
+1. data page skipping -> Unimplemented
+1.5 Bloom filter -> Unimplememted -> own implementation
 2. row filtering
 3. aggregation
 4. complex aggregation parsing

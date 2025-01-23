@@ -1,18 +1,28 @@
 use std::{collections::HashMap, error::Error, path::PathBuf, pin::Pin};
 
 use arrow::array::RecordBatch;
+use bloom_filter::BloomFilter;
 use futures::StreamExt;
 use parquet::{
     arrow::{
-        arrow_reader::ArrowReaderMetadata, async_reader::ParquetRecordBatchStream,
+        arrow_reader::{ArrowReaderMetadata, RowSelection},
+        async_reader::ParquetRecordBatchStream,
         ParquetRecordBatchStreamBuilder, ProjectionMask,
     },
     file::metadata::{FileMetaData, RowGroupMetaData},
 };
-use tokio::fs::File;
+use tokio::fs::{File, OpenOptions};
+
+mod bloom_filter;
+mod more_row_groups;
+mod parse;
 
 const INPUT_FILE_NAME: &str = "output.parquet";
 const COLUMN_NAME: &str = "memoryUsed";
+
+const INPUT_FILE: &str = "test.parquet";
+const OUTPUT_FILE: &str = "output.parquet";
+const ROWS_PER_GROUP: usize = 1024;
 
 #[derive(PartialEq)]
 pub enum Comparison {
@@ -42,10 +52,10 @@ pub struct Condition {
     pub comparison: Comparison,
 }
 
+#[derive(Debug)]
 pub enum ThresholdValue {
     Number(f64),
     Utf8String(String),
-    DateTime(chrono::NaiveDateTime),
 }
 
 pub enum Expression {
@@ -85,17 +95,6 @@ impl Comparison {
                 Comparison::GreaterThanOrEqual => max >= threshold,
                 Comparison::GreaterThan => max > threshold,
             },
-            (
-                ThresholdValue::DateTime(min),
-                ThresholdValue::DateTime(max),
-                ThresholdValue::DateTime(threshold),
-            ) => match self {
-                Comparison::LessThan => *min < *threshold,
-                Comparison::LessThanOrEqual => *min <= *threshold,
-                Comparison::Equal => *threshold >= *min && *threshold <= *max,
-                Comparison::GreaterThanOrEqual => *max >= *threshold,
-                Comparison::GreaterThan => *max > *threshold,
-            },
             _ => true,
         }
     }
@@ -109,6 +108,19 @@ pub struct MetadataEntry {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    // Increase Row Groups
+    let input_file = File::open(INPUT_FILE).await?;
+
+    let output_file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .truncate(true)
+        .create(true)
+        .open(OUTPUT_FILE)
+        .await?;
+
+    let bloom_filters = more_row_groups::prepare_file(input_file, output_file, ROWS_PER_GROUP).await?;
+
     // Store metadata
     let mut cached_metadata: Vec<MetadataEntry> = Vec::new();
 
@@ -153,17 +165,20 @@ async fn main() -> Result<(), Box<dyn Error>> {
         COLUMN_NAME, 30_000_000 as i64, COLUMN_NAME, 100_000_000_000 as i64,
     );
     //
-    let input = format!("endTime < 2018-03-02-14:23:41");
-    let expression = parse_expression(&input)?;
+    let input = format!("endTime < 2018-03-03-14:23:41");
+    let expression = parse::parse_expression(&input)?;
 
     let select_columns = vec!["memoryUsed".to_owned()];
 
-    let _result = smart_query_parquet(&metadata_entry, &expression, &select_columns).await?;
+    let result = smart_query_parquet(&metadata_entry, bloom_filters, &expression, &select_columns).await?;
+
+    println!("Result: {:#?}", result);
     Ok(())
 }
 
 pub async fn smart_query_parquet(
     metadata_entry: &MetadataEntry,
+    bloom_filters: Vec<Vec<Option<BloomFilter>>>,
     expression: &Expression,
     select_columns: &Vec<String>,
 ) -> Result<RecordBatch, Box<dyn Error>> {
@@ -183,8 +198,8 @@ pub async fn smart_query_parquet(
 
     for i in 0..metadata.num_row_groups() {
         let row_group_metadata = metadata.row_group(i);
-        let is_keep = keep_row_group(row_group_metadata, expression)?;
-        println!("Row Group: {}, Skip: {}", i, is_keep);
+        let is_keep = keep_row_group(row_group_metadata, &bloom_filters[i], expression)?;
+        println!("Row Group: {}, Skip: {}", i, !is_keep);
         if is_keep {
             row_groups.push(i);
         }
@@ -193,10 +208,15 @@ pub async fn smart_query_parquet(
     println!("Filtered Row Groups: {}", row_groups.len());
 
     // let row_filter = RowFilter::new();
+    let ranges = vec![5..10, 11..15];
 
     let mut stream = builder
         .with_projection(mask)
         .with_row_groups(row_groups)
+        .with_row_selection(RowSelection::from_consecutive_ranges(
+            ranges.into_iter(),
+            20,
+        ))
         // .with_row_filter(RowFi)
         .build()?;
     let mut pinned_stream = Pin::new(&mut stream);
@@ -226,40 +246,51 @@ pub async fn get_next_item_from_reader(
 
 pub fn keep_row_group(
     row_group: &RowGroupMetaData,
+    bloom_filters: &Vec<Option<BloomFilter>>,
     expression: &Expression,
 ) -> Result<bool, Box<dyn Error>> {
     match expression {
         Expression::Condition(condition) => {
-            if let Some(column) = row_group
+            if let Some((index, column)) = row_group
                 .columns()
                 .iter()
-                .find(|c| c.column_path().string() == condition.column_name)
+                .enumerate()
+                .find(|(_, c)| c.column_path().string() == condition.column_name)
             {
                 let column_type = column.column_type().to_string();
+                let bloom_filter = &bloom_filters[index];
                 if let Some(stats) = column.statistics() {
                     if let (Some(min_bytes), Some(max_bytes)) =
                         (stats.min_bytes_opt(), stats.max_bytes_opt())
                     {
                         let min_value = bytes_to_value(min_bytes, &column_type)?;
                         let max_value = bytes_to_value(max_bytes, &column_type)?;
-                        let result =
+                        // println!("MIN: {:#?}", min_value);
+                        // println!("MAX: {:#?}", max_value);
+                        // println!("Threshold: {:#?}", &condition.threshold);
+                        let mut result =
                             condition
                                 .comparison
                                 .keep(&min_value, &max_value, &condition.threshold);
+                        if !result && condition.comparison == Comparison::Equal {
+                            if let Some(bloom_filter) = bloom_filter {
+                                result = bloom_filter.contains(&condition.threshold);
+                            }
+                        }
+                        
                         return Ok(result);
                     }
                 }
             }
             Ok(false)
         }
-        //
         Expression::And(left, right) => {
-            Ok(keep_row_group(row_group, left)? && keep_row_group(row_group, right)?)
+            Ok(keep_row_group(row_group, bloom_filters, left)? && keep_row_group(row_group, bloom_filters, right)?)
         }
         Expression::Or(left, right) => {
-            Ok(keep_row_group(row_group, left)? || keep_row_group(row_group, right)?)
+            Ok(keep_row_group(row_group, bloom_filters, left)? || keep_row_group(row_group, bloom_filters, right)?)
         }
-        Expression::Not(inner) => Ok(!keep_row_group(row_group, inner)?),
+        Expression::Not(inner) => Ok(!keep_row_group(row_group, bloom_filters, inner)?),
     }
 }
 
@@ -306,132 +337,8 @@ fn bytes_to_value(bytes: &[u8], column_type: &str) -> Result<ThresholdValue, Box
         "BYTE_ARRAY" => {
             use std::str;
             let s = str::from_utf8(bytes)?.to_owned();
-            // Now decide if we want to keep it as raw string or parse as date...
-            // For a purely textual column, store as string:
-            // TODO
             Ok(ThresholdValue::Utf8String(s))
         }
         _ => Err(format!("Unsupported column type: {}", column_type).into()),
     }
-}
-
-fn parse_expression(input: &str) -> Result<Expression, Box<dyn Error>> {
-    let tokens = tokenize(input)?;
-    let mut pos = 0;
-    parse_or(&tokens, &mut pos)
-}
-
-fn tokenize(input: &str) -> Result<Vec<String>, Box<dyn Error>> {
-    let mut tokens = Vec::new();
-    let mut current = String::new();
-
-    for c in input.chars() {
-        match c {
-            '(' | ')' | ' ' => {
-                if !current.is_empty() {
-                    tokens.push(current.clone());
-                    current.clear();
-                }
-                if c != ' ' {
-                    tokens.push(c.to_string());
-                }
-            }
-            _ => current.push(c),
-        }
-    }
-
-    if !current.is_empty() {
-        tokens.push(current);
-    }
-
-    Ok(tokens)
-}
-
-fn parse_or(tokens: &[String], pos: &mut usize) -> Result<Expression, Box<dyn Error>> {
-    let mut expr = parse_and(tokens, pos)?;
-
-    while *pos < tokens.len() && tokens[*pos] == "OR" {
-        *pos += 1;
-        let right = parse_and(tokens, pos)?;
-        expr = Expression::Or(Box::new(expr), Box::new(right));
-    }
-
-    Ok(expr)
-}
-
-fn parse_and(tokens: &[String], pos: &mut usize) -> Result<Expression, Box<dyn Error>> {
-    let mut expr = parse_not(tokens, pos)?;
-
-    while *pos < tokens.len() && tokens[*pos] == "AND" {
-        *pos += 1;
-        let right = parse_not(tokens, pos)?;
-        expr = Expression::And(Box::new(expr), Box::new(right));
-    }
-
-    Ok(expr)
-}
-
-fn parse_not(tokens: &[String], pos: &mut usize) -> Result<Expression, Box<dyn Error>> {
-    if *pos < tokens.len() && tokens[*pos] == "NOT" {
-        *pos += 1;
-        let expr = parse_primary(tokens, pos)?;
-        return Ok(Expression::Not(Box::new(expr)));
-    }
-
-    parse_primary(tokens, pos)
-}
-
-fn parse_primary(tokens: &[String], pos: &mut usize) -> Result<Expression, Box<dyn Error>> {
-    if *pos >= tokens.len() {
-        return Err("Unexpected end of input".into());
-    }
-
-    if tokens[*pos] == "(" {
-        *pos += 1;
-        let expr = parse_or(tokens, pos)?;
-        if *pos >= tokens.len() || tokens[*pos] != ")" {
-            return Err("Expected closing parenthesis".into());
-        }
-        *pos += 1;
-        return Ok(expr);
-    }
-
-    // Parse condition
-    let column_name = tokens[*pos].clone();
-    *pos += 1;
-
-    if *pos >= tokens.len() {
-        return Err("Expected comparison operator".into());
-    }
-
-    let comparison = Comparison::from_str(&tokens[*pos]).ok_or("Invalid comparison operator")?;
-    *pos += 1;
-
-    if *pos >= tokens.len() {
-        return Err("Expected threshold value".into());
-    }
-
-    // let threshold: f64 = tokens[*pos].parse()?;
-    // *pos += 1;
-
-    let threshold_token = &tokens[*pos];
-    *pos += 1;
-
-    let threshold = if let Ok(num) = threshold_token.parse::<f64>() {
-        ThresholdValue::Number(num)
-    } else if let Ok(datetime) = parse_iso_datetime(threshold_token) {
-        ThresholdValue::DateTime(datetime)
-    } else {
-        ThresholdValue::Utf8String(threshold_token.to_owned())
-    };
-
-    Ok(Expression::Condition(Condition {
-        column_name,
-        comparison,
-        threshold,
-    }))
-}
-
-fn parse_iso_datetime(s: &str) -> Result<chrono::NaiveDateTime, chrono::ParseError> {
-    chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d-%H:%M:%S")
 }
