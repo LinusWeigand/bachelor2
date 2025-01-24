@@ -4,16 +4,14 @@ use arrow::array::RecordBatch;
 use futures::StreamExt;
 use parquet::{
     arrow::{
-        arrow_reader::{ArrowPredicate, ArrowPredicateFn, ArrowReaderMetadata, RowFilter},
-        async_reader::ParquetRecordBatchStream,
+        arrow_reader::ArrowReaderMetadata, async_reader::ParquetRecordBatchStream,
         ParquetRecordBatchStreamBuilder, ProjectionMask,
-    }, file::metadata::{FileMetaData, RowGroupMetaData}
+    },
+    file::metadata::{FileMetaData, RowGroupMetaData},
 };
 use tokio::fs::File;
 
-use crate::{
-    bloom_filter::BloomFilter,
-};
+use crate::bloom_filter::BloomFilter;
 
 #[derive(PartialEq, Clone, Debug)]
 pub enum Comparison {
@@ -44,15 +42,6 @@ pub struct Condition {
     pub comparison: Comparison,
 }
 
-trait ExtractValue {
-    fn as_any(&self) -> &dyn std::any::Any;
-}
-
-impl ExtractValue for ThresholdValue {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-}
 #[derive(Debug, Clone)]
 pub enum ThresholdValue {
     Int64(i64),
@@ -104,7 +93,7 @@ impl Float for f32 {
         self.abs()
     }
     fn equal(self, other: Self) -> bool {
-        (self - other).abs() <  f32::EPSILON
+        (self - other).abs() < f32::EPSILON
     }
 }
 
@@ -113,7 +102,7 @@ impl Float for f64 {
         self.abs()
     }
     fn equal(self, other: Self) -> bool {
-        (self - other).abs() <  f64::EPSILON
+        (self - other).abs() < f64::EPSILON
     }
 }
 pub fn compare_floats<T: Float>(min: T, max: T, v: T, comparison: &Comparison, not: bool) -> bool {
@@ -141,7 +130,6 @@ pub fn compare_floats<T: Float>(min: T, max: T, v: T, comparison: &Comparison, n
     }
 }
 
-
 impl Comparison {
     pub fn keep(
         &self,
@@ -151,11 +139,9 @@ impl Comparison {
         not: bool,
     ) -> bool {
         match (row_group_min, row_group_max, user_threshold) {
-            (
-                ThresholdValue::Int64(min),
-                ThresholdValue::Int64(max),
-                ThresholdValue::Int64(v),
-            ) => compare(min, max, v, self, not),
+            (ThresholdValue::Int64(min), ThresholdValue::Int64(max), ThresholdValue::Int64(v)) => {
+                compare(min, max, v, self, not)
+            }
             (
                 ThresholdValue::Boolean(min),
                 ThresholdValue::Boolean(max),
@@ -218,14 +204,19 @@ pub async fn smart_query_parquet(
     }
 
     if let Some(expression) = expression {
-
         // Filter Row Groups
         let mut row_groups: Vec<usize> = Vec::new();
 
         for i in 0..metadata.num_row_groups() {
             let row_group_metadata = metadata.row_group(i);
-            let is_keep =
-                keep_row_group(row_group_metadata, &bloom_filters[i], i, &expression, false, &metadata_entry.column_maps)?;
+            let is_keep = keep_row_group(
+                row_group_metadata,
+                &bloom_filters[i],
+                i,
+                &expression,
+                false,
+                &metadata_entry.column_maps,
+            )?;
             println!("Row Group: {}, Skip: {}", i, !is_keep);
             if is_keep {
                 row_groups.push(i);
@@ -300,19 +291,12 @@ pub fn keep_row_group(
                 .enumerate()
                 .find(|(_, c)| c.column_path().string() == condition.column_name)
             {
-                // println!("Found column");
                 let column_type = column.column_type().to_string();
-
-                // println!("ColumnChunkLocation to find: {:#?}", column_chunk_location);
 
                 let bloom_filter = match bloom_filters.get(column_index) {
                     Some(v) => v,
                     None => &None,
                 };
-
-                if let Some(bloom_filter) = bloom_filter {
-                    // println!("Bloom Bit Array: {:?}", bloom_filter.bit_array);
-                }
 
                 if let Some(stats) = column.statistics() {
                     if let (Some(min_bytes), Some(max_bytes)) =
@@ -320,16 +304,15 @@ pub fn keep_row_group(
                     {
                         let min_value = bytes_to_value(min_bytes, &column_type)?;
                         let max_value = bytes_to_value(max_bytes, &column_type)?;
-                        // println!("MIN: {:#?}", min_value);
-                        // println!("MAX: {:#?}", max_value);
-                        // println!("Threshold: {:#?}", &condition.threshold);
-                        // let mut result = condition.comparison.keep(
-                        //     &min_value,
-                        //     &max_value,
-                        //     &condition.threshold,
-                        //     not,
-                        // );
-                        let mut result = true;
+                        println!("MIN: {:#?}", min_value);
+                        println!("MAX: {:#?}", max_value);
+                        println!("Threshold: {:#?}", &condition.threshold);
+                        let mut result = condition.comparison.keep(
+                            &min_value,
+                            &max_value,
+                            &condition.threshold,
+                            not,
+                        );
                         if result && condition.comparison == Comparison::Equal {
                             if let Some(bloom_filter) = bloom_filter {
                                 result = match &condition.threshold {
@@ -339,7 +322,7 @@ pub fn keep_row_group(
                                     ThresholdValue::Float64(v) => {
                                         let value = *v as i32;
                                         bloom_filter.contains(&value)
-                                    },
+                                    }
                                 };
 
                                 println!("Bloom Result: {}", result);
@@ -354,22 +337,74 @@ pub fn keep_row_group(
         }
         Expression::And(left, right) => Ok(match not {
             true => {
-                keep_row_group(row_group, bloom_filters, row_group_index, left, true, column_maps)?
-                    || keep_row_group(row_group, bloom_filters, row_group_index, right, true, column_maps)?
+                keep_row_group(
+                    row_group,
+                    bloom_filters,
+                    row_group_index,
+                    left,
+                    true,
+                    column_maps,
+                )? || keep_row_group(
+                    row_group,
+                    bloom_filters,
+                    row_group_index,
+                    right,
+                    true,
+                    column_maps,
+                )?
             }
             false => {
-                keep_row_group(row_group, bloom_filters, row_group_index, left, false, column_maps)?
-                    && keep_row_group(row_group, bloom_filters, row_group_index, right, false, column_maps)?
+                keep_row_group(
+                    row_group,
+                    bloom_filters,
+                    row_group_index,
+                    left,
+                    false,
+                    column_maps,
+                )? && keep_row_group(
+                    row_group,
+                    bloom_filters,
+                    row_group_index,
+                    right,
+                    false,
+                    column_maps,
+                )?
             }
         }),
         Expression::Or(left, right) => Ok(match not {
             true => {
-                keep_row_group(row_group, bloom_filters, row_group_index, left, true, column_maps)?
-                    && keep_row_group(row_group, bloom_filters, row_group_index, right, true, column_maps)?
+                keep_row_group(
+                    row_group,
+                    bloom_filters,
+                    row_group_index,
+                    left,
+                    true,
+                    column_maps,
+                )? && keep_row_group(
+                    row_group,
+                    bloom_filters,
+                    row_group_index,
+                    right,
+                    true,
+                    column_maps,
+                )?
             }
             false => {
-                keep_row_group(row_group, bloom_filters, row_group_index, left, false, column_maps)?
-                    || keep_row_group(row_group, bloom_filters, row_group_index, right, false, column_maps)?
+                keep_row_group(
+                    row_group,
+                    bloom_filters,
+                    row_group_index,
+                    left,
+                    false,
+                    column_maps,
+                )? || keep_row_group(
+                    row_group,
+                    bloom_filters,
+                    row_group_index,
+                    right,
+                    false,
+                    column_maps,
+                )?
             }
         }),
         Expression::Not(inner) => Ok(keep_row_group(
@@ -378,7 +413,7 @@ pub fn keep_row_group(
             row_group_index,
             inner,
             !not,
-            column_maps
+            column_maps,
         )?),
     }
 }
@@ -400,7 +435,12 @@ pub fn get_column_maps(metadata: &FileMetaData) -> ColumnMaps {
         .iter()
         .enumerate()
         .map(|(i, column)| {
-            let column_name = column.path().to_string().trim().trim_matches('"').to_string();
+            let column_name = column
+                .path()
+                .to_string()
+                .trim()
+                .trim_matches('"')
+                .to_string();
             index_to_name.insert(i, column_name.clone());
             (column_name, i)
         })
@@ -419,14 +459,14 @@ fn bytes_to_value(bytes: &[u8], column_type: &str) -> Result<ThresholdValue, Box
             }
             let v = i32::from_le_bytes(bytes.try_into()?);
             Ok(ThresholdValue::Int64(v as i64))
-        },
+        }
         "INT64" => {
             if bytes.len() != 8 {
                 return Err("Expected 8 bytes for INT64".into());
             }
             let v = i64::from_le_bytes(bytes.try_into()?);
             Ok(ThresholdValue::Int64(v))
-        },
+        }
         "FLOAT" => {
             if bytes.len() != 4 {
                 return Err("Expected 4 bytes for FLOAT".into());

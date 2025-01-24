@@ -2,7 +2,7 @@ use core::f32;
 use std::{error::Error, path::PathBuf, sync::Arc};
 
 use arrow::{
-    array::{BooleanArray, Date64Array, Float32Array, Int32Array, Int64Array, RecordBatch, StringArray, UInt8Array},
+    array::{BooleanArray, Date64Array, Float32Array, RecordBatch, StringArray, UInt8Array},
     datatypes::{DataType, Field, Schema},
     util::pretty::print_batches,
 };

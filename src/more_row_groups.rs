@@ -1,17 +1,17 @@
-use std::{collections::HashMap, error::Error, pin::Pin};
+use std::{error::Error, pin::Pin};
 
-use arrow::{array::RecordBatch, datatypes::Schema};
+use arrow::array::RecordBatch;
 use futures::StreamExt;
 use parquet::{
     arrow::{
         async_reader::ParquetRecordBatchStream, AsyncArrowWriter, ParquetRecordBatchStreamBuilder,
     },
     basic::Compression,
-    file::{properties::{EnabledStatistics, WriterProperties}},
+    file::properties::{EnabledStatistics, WriterProperties},
 };
 use tokio::fs::File;
 
-use crate::{bloom_filter::BloomFilter, query::{ColumnMaps}};
+use crate::bloom_filter::BloomFilter;
 
 const ROWS_PER_GROUP: usize = 2;
 
@@ -23,21 +23,15 @@ pub async fn prepare_file(
     rows_per_group: usize,
 ) -> Result<Vec<Vec<Option<BloomFilter>>>, Box<dyn Error>> {
     let mut bloom_filters = Vec::new();
-    let mut row_group_index = 0;
 
     let builder = ParquetRecordBatchStreamBuilder::new(input_file)
         .await?
         .with_batch_size(rows_per_group);
 
-    let metadata = builder.metadata().file_metadata();
-    let column_names: Vec<String> = metadata.schema_descr().columns().iter().map(|column| column.path().to_string().trim().trim_matches('"').to_string()).collect();
-
     let mut stream = builder.build()?;
     let mut pinned_stream = Pin::new(&mut stream);
 
-
     let record_batch = get_next_item_from_reader(&mut pinned_stream).await;
-
 
     if record_batch.is_none() {
         return Err("File is empty".into());
@@ -59,8 +53,6 @@ pub async fn prepare_file(
     writer.flush().await?;
 
     while let Some(record_batch) = get_next_item_from_reader(&mut pinned_stream).await {
-        row_group_index += 1;
-
         let row_group_bloom_filters = get_bloom_filters_from_batch(&record_batch);
         bloom_filters.push(row_group_bloom_filters);
 
@@ -72,31 +64,9 @@ pub async fn prepare_file(
     Ok(bloom_filters)
 }
 
-//TODO maybe can't find because column names have "" around them?
-fn get_column_maps(schema: Schema, columns: &Vec<String>) -> ColumnMaps {
-    let mut index_to_name = HashMap::new();
-
-    let fields = schema.fields();
-    let name_to_index: HashMap<String, usize> = columns
-        .iter()
-        .filter_map(|column| {
-            let field = fields.find(column);
-            if let Some((index, _)) = field {
-                index_to_name.insert(index, column.to_owned());
-                return Some((column.to_owned(), index))
-            }
-            None
-        })
-    .collect();
-    ColumnMaps { index_to_name, name_to_index}
-}
-
-fn get_bloom_filters_from_batch(
-    batch: &RecordBatch,
-) -> Vec<Option<BloomFilter>> {
+fn get_bloom_filters_from_batch(batch: &RecordBatch) -> Vec<Option<BloomFilter>> {
     let mut result = Vec::new();
     let num_cols = batch.num_columns();
-
 
     for column_index in 0..num_cols {
         // println!("Populating Bloom Filter Column: {}", column_index);
@@ -107,7 +77,7 @@ fn get_bloom_filters_from_batch(
             Ok(_) => Some(bloom_filter),
             Err(_) => None,
         };
-        if let Some(filter) = &entry {
+        if let Some(_filter) = &entry {
             // println!("Insert Bloom Filter with bit array: {:?}", filter.bit_array);
         } else {
             println!("Couldn't get a bloom filter for column: {}", column_index);
