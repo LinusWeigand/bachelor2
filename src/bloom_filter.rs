@@ -231,6 +231,7 @@ impl BloomFilter {
                 for i in 0..col.len() {
                     if col.is_valid(i) {
                         let val = col.value(i);
+                        println!("Inserting Date64 into Bloom Filter: {}", &val);
                         self.insert(&val);
                     }
                 }

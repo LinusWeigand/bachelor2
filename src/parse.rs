@@ -1,3 +1,5 @@
+use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
+
 use crate::query::{Comparison, Condition, Expression, ThresholdValue};
 use std::{error::Error, i64};
 
@@ -126,6 +128,9 @@ pub fn parse_primary(tokens: &[String], pos: &mut usize) -> Result<Expression, B
 }
 
 pub fn parse_iso_datetime(s: &str) -> Result<i64, chrono::ParseError> {
-    let date_time = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d-%H:%M:%S")?;
-    Ok(date_time.and_utc().timestamp_micros())
+    let naive_date_time = NaiveDateTime::parse_from_str(s, "%Y-%m-%d-%H:%M:%S")?;
+    let utc_date_time: DateTime<Utc> = Utc.from_utc_datetime(&naive_date_time);
+    let timestamp = utc_date_time.timestamp_millis();
+    println!("Parsed timestamp: {}", timestamp);
+    Ok(timestamp)
 }

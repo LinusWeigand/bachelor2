@@ -109,7 +109,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // Query
 
-    let input = "Age == 10";
+    // let input = "Birthday == 2004-12-31-23:1:1";
+    let input = "Birthday == 2025-1-1-1:1:1";
     // let input = "";
 
     let expression = if input.is_empty() {

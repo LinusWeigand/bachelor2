@@ -56,7 +56,6 @@ impl ExtractValue for ThresholdValue {
 #[derive(Debug, Clone)]
 pub enum ThresholdValue {
     Int64(i64),
-    UInt64(u64),
     Float64(f64),
     Boolean(bool),
     Utf8String(String),
@@ -152,11 +151,6 @@ impl Comparison {
         not: bool,
     ) -> bool {
         match (row_group_min, row_group_max, user_threshold) {
-            (
-                ThresholdValue::UInt64(min),
-                ThresholdValue::UInt64(max),
-                ThresholdValue::UInt64(v),
-            ) => compare(min, max, v, self, not),
             (
                 ThresholdValue::Int64(min),
                 ThresholdValue::Int64(max),
@@ -344,7 +338,6 @@ pub fn keep_row_group(
                         if result && condition.comparison == Comparison::Equal {
                             if let Some(bloom_filter) = bloom_filter {
                                 result = match &condition.threshold {
-                                    ThresholdValue::UInt64(v) => bloom_filter.contains(&v),
                                     ThresholdValue::Int64(v) => bloom_filter.contains(&v),
                                     ThresholdValue::Boolean(v) => bloom_filter.contains(&v),
                                     ThresholdValue::Utf8String(v) => bloom_filter.contains(&v),
