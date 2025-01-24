@@ -1,16 +1,12 @@
-use std::{error::Error, path::PathBuf};
-use parquet::{
-    arrow::{
-        arrow_reader::{ArrowReaderMetadata},
-    },
-};
+use parquet::arrow::arrow_reader::ArrowReaderMetadata;
 use query::MetadataEntry;
+use std::{error::Error, path::PathBuf};
 use tokio::fs::{File, OpenOptions};
 
-pub mod query;
 mod bloom_filter;
 mod more_row_groups;
 pub mod parse;
+pub mod query;
 mod row_filter;
 
 const INPUT_FILE_NAME: &str = "output.parquet";
@@ -85,10 +81,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let select_columns = vec!["memoryUsed".to_owned()];
 
-    let result =
-        query::smart_query_parquet(&metadata_entry, bloom_filters, &expression, &select_columns).await?;
+    let result = query::smart_query_parquet(
+        &metadata_entry,
+        bloom_filters,
+        Some(expression),
+        Some(select_columns),
+    )
+    .await?;
 
     println!("Result: {:#?}", result);
     Ok(())
 }
-

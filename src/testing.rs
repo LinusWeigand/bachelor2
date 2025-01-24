@@ -54,7 +54,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         1735693261000,
     ]));
     let array_graduated = Arc::new(BooleanArray::from(vec![
-        false, false, true, false, true, false,
+        false, false, true, false, true, true,
     ]));
     let array_float = Arc::new(Float32Array::from(vec![
         11.11,
@@ -109,13 +109,24 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // Query
 
-    let input = "Age > 25";
-    let expression = parse::parse_expression(input)?;
+    // let input = "Graduated == false";
+    let input = "";
 
-    let select_columns = vec!["Name".to_owned()];
+
+    let expression = if input.is_empty() {
+        None
+    } else {
+        Some(parse::parse_expression(input)?)
+    };
+    // println!("{:#?}", expression);
+
+
+    // let select_columns = Some(vec!["Graduated".to_owned()]);
+    let select_columns = None;
     
-    let results = query::smart_query_parquet(&metadata_entry, bloom_filters, &expression, &select_columns).await?;
+    let results = query::smart_query_parquet(&metadata_entry, bloom_filters, expression, select_columns).await?;
 
+    println!("INPUT: {}", input);
     print_batches(&results)?;
 
     Ok(())

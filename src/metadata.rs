@@ -3,8 +3,8 @@ use std::{error::Error, path::PathBuf};
 use parquet::arrow::arrow_reader::ArrowReaderMetadata;
 use tokio::fs::File;
 
-const INPUT_FILE_NAME: &str = "output.parquet";
-const COLUMN_NAME: &str = "memoryUsed";
+const INPUT_FILE_NAME: &str = "testing_output.parquet";
+const COLUMN_NAME: &str = "Float";
 
 #[tokio::main]
 pub async fn main() -> Result<(), Box<dyn Error>> {

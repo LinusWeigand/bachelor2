@@ -2,12 +2,19 @@ use std::{collections::HashMap, error::Error, path::PathBuf, pin::Pin};
 
 use arrow::array::RecordBatch;
 use futures::StreamExt;
-use parquet::{arrow::{arrow_reader::{ArrowPredicate, ArrowPredicateFn, ArrowReaderMetadata, RowFilter}, async_reader::ParquetRecordBatchStream, ParquetRecordBatchStreamBuilder, ProjectionMask}, file::metadata::{FileMetaData, RowGroupMetaData}};
+use parquet::{
+    arrow::{
+        arrow_reader::{ArrowPredicate, ArrowPredicateFn, ArrowReaderMetadata, RowFilter},
+        async_reader::ParquetRecordBatchStream,
+        ParquetRecordBatchStreamBuilder, ProjectionMask,
+    },
+    file::metadata::{FileMetaData, RowGroupMetaData},
+};
 use tokio::fs::File;
 
 use crate::{bloom_filter::BloomFilter, row_filter::predicate_function};
 
-#[derive(PartialEq, Clone)]
+#[derive(PartialEq, Clone, Debug)]
 pub enum Comparison {
     LessThan,
     LessThanOrEqual,
@@ -29,7 +36,7 @@ impl Comparison {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Condition {
     pub column_name: String,
     pub threshold: ThresholdValue,
@@ -43,7 +50,7 @@ pub enum ThresholdValue {
     Utf8String(String),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Expression {
     Condition(Condition),
     And(Box<Expression>, Box<Expression>),
@@ -57,40 +64,74 @@ impl Comparison {
         row_group_min: &ThresholdValue,
         row_group_max: &ThresholdValue,
         user_threshold: &ThresholdValue,
+        not: bool,
     ) -> bool {
         match (row_group_min, row_group_max, user_threshold) {
             (
                 ThresholdValue::Number(min),
                 ThresholdValue::Number(max),
-                ThresholdValue::Number(threshold),
+                ThresholdValue::Number(v),
             ) => match self {
-                Comparison::LessThan => min < threshold,
-                Comparison::LessThanOrEqual => min <= threshold,
-                Comparison::Equal => threshold >= min && threshold <= max,
-                Comparison::GreaterThanOrEqual => max >= threshold,
-                Comparison::GreaterThan => max > threshold,
+                Comparison::LessThan => match not {
+                    false => min < v,
+                    true => min >= v,
+                },
+                Comparison::LessThanOrEqual => match not {
+                    false => min <= v,
+                    true => min > v,
+                },
+                Comparison::Equal => match not {
+                    false => v >= min && v <= max,
+                    true => v == min && v == max,
+                }
+                Comparison::GreaterThanOrEqual => match not {
+                    false => max >= v,
+                    true => max < v,
+                },
+                Comparison::GreaterThan => match not {
+                    false => max > v,
+                    true => max <= v,
+                },
             },
             (
                 ThresholdValue::Boolean(min),
                 ThresholdValue::Boolean(max),
-                ThresholdValue::Boolean(threshold),
+                ThresholdValue::Boolean(v),
             ) => match self {
                 Comparison::LessThan => true,
                 Comparison::LessThanOrEqual => true,
-                Comparison::Equal => threshold == min || threshold == max,
+                Comparison::Equal => match not {
+                    true => v == min || v == max,
+                    false => v != min || v != max,
+                },
                 Comparison::GreaterThanOrEqual => true,
                 Comparison::GreaterThan => true,
             },
             (
                 ThresholdValue::Utf8String(min),
                 ThresholdValue::Utf8String(max),
-                ThresholdValue::Utf8String(threshold),
+                ThresholdValue::Utf8String(v),
             ) => match self {
-                Comparison::LessThan => min < threshold,
-                Comparison::LessThanOrEqual => min <= threshold,
-                Comparison::Equal => threshold >= min && threshold <= max,
-                Comparison::GreaterThanOrEqual => max >= threshold,
-                Comparison::GreaterThan => max > threshold,
+                Comparison::LessThan => match not {
+                    false => min < v,
+                    true => min >= v,
+                },
+                Comparison::LessThanOrEqual => match not {
+                    false => min <= v,
+                    true => min > v,
+                },
+                Comparison::Equal => match not {
+                    false => v >= min && v <= max,
+                    true => v == min && v == max,
+                }
+                Comparison::GreaterThanOrEqual => match not {
+                    false => max >= v,
+                    true => max < v,
+                },
+                Comparison::GreaterThan => match not {
+                    false => max > v,
+                    true => max <= v,
+                },
             },
             _ => true,
         }
@@ -103,12 +144,11 @@ pub struct MetadataEntry {
     pub column_index_map: HashMap<String, usize>,
 }
 
-
 pub async fn smart_query_parquet(
     metadata_entry: &MetadataEntry,
     bloom_filters: Vec<Vec<Option<BloomFilter>>>,
-    expression: &Expression,
-    select_columns: &Vec<String>,
+    expression: Option<Expression>,
+    select_columns: Option<Vec<String>>,
 ) -> Result<Vec<RecordBatch>, Box<dyn Error>> {
     let file = File::open(&metadata_entry.file_path).await?;
 
@@ -116,43 +156,53 @@ pub async fn smart_query_parquet(
     let builder = ParquetRecordBatchStreamBuilder::new_with_metadata(file, metadata.clone());
     let metadata = metadata.metadata();
 
-    let column_indices: Vec<usize> = select_columns
-        .iter()
-        .filter_map(|column| metadata_entry.column_index_map.get(column).map(|&x| x))
-        .collect();
-    let mask = ProjectionMask::roots(metadata.file_metadata().schema_descr(), column_indices);
+    let mut stream = builder;
 
-    let mut row_groups: Vec<usize> = Vec::new();
+    if let Some(select_columns) = select_columns {
+        let column_indices: Vec<usize> = select_columns
+            .iter()
+            .filter_map(|column| metadata_entry.column_index_map.get(&format!("\"{}\"", column)).map(|&x| x)) 
+            .collect();
 
-    for i in 0..metadata.num_row_groups() {
-        let row_group_metadata = metadata.row_group(i);
-        let is_keep = keep_row_group(row_group_metadata, &bloom_filters[i], expression)?;
-        println!("Row Group: {}, Skip: {}", i, !is_keep);
-        if is_keep {
-            row_groups.push(i);
-        }
+        let mask = ProjectionMask::roots(metadata.file_metadata().schema_descr(), column_indices);
+
+        stream = stream.with_projection(mask);
     }
 
-    println!("Filtered Row Groups: {}", row_groups.len());
+    if let Some(expression) = expression {
+        let mut row_groups: Vec<usize> = Vec::new();
 
-    let filter_columns: Vec<String> = get_column_projection_from_expression(expression);
-    let column_indices: Vec<usize> = filter_columns
-        .iter()
-        .filter_map(|column| metadata_entry.column_index_map.get(column).map(|&x| x))
-        .collect();
-    let projection = ProjectionMask::roots(metadata.file_metadata().schema_descr(), column_indices);
-    let predicate: Box<dyn ArrowPredicate> = Box::new(ArrowPredicateFn::new(
-        projection,
-        predicate_function(expression.clone()),
-    ));
-    let predicates: Vec<Box<dyn ArrowPredicate>> = vec![predicate];
-    let row_filter: RowFilter = RowFilter::new(predicates);
+        for i in 0..metadata.num_row_groups() {
+            let row_group_metadata = metadata.row_group(i);
+            let is_keep =
+                keep_row_group(row_group_metadata, &bloom_filters[i], &expression, false)?;
+            println!("Row Group: {}, Skip: {}", i, !is_keep);
+            if is_keep {
+                row_groups.push(i);
+            }
+        }
+        println!("Filtered Row Groups: {}", row_groups.len());
 
-    let mut stream = builder
-        // .with_projection(mask)
-        .with_row_groups(row_groups)
-        // .with_row_filter(row_filter)
-        .build()?;
+        let filter_columns: Vec<String> = get_column_projection_from_expression(&expression);
+        let column_indices: Vec<usize> = filter_columns
+            .iter()
+            .filter_map(|column| metadata_entry.column_index_map.get(column).map(|&x| x))
+            .collect();
+        let projection =
+            ProjectionMask::roots(metadata.file_metadata().schema_descr(), column_indices);
+        let predicate: Box<dyn ArrowPredicate> = Box::new(ArrowPredicateFn::new(
+            projection,
+            predicate_function(expression.clone()),
+        ));
+        let predicates: Vec<Box<dyn ArrowPredicate>> = vec![predicate];
+        let row_filter: RowFilter = RowFilter::new(predicates);
+
+        stream = stream
+            .with_row_groups(row_groups)
+            .with_row_filter(row_filter);
+    }
+
+    let mut stream = stream.build()?;
     let mut pinned_stream = Pin::new(&mut stream);
 
     let record_batch = get_next_item_from_reader(&mut pinned_stream).await;
@@ -188,6 +238,7 @@ pub fn keep_row_group(
     row_group: &RowGroupMetaData,
     bloom_filters: &Vec<Option<BloomFilter>>,
     expression: &Expression,
+    not: bool,
 ) -> Result<bool, Box<dyn Error>> {
     match expression {
         Expression::Condition(condition) => {
@@ -208,10 +259,12 @@ pub fn keep_row_group(
                         // println!("MIN: {:#?}", min_value);
                         // println!("MAX: {:#?}", max_value);
                         // println!("Threshold: {:#?}", &condition.threshold);
-                        let mut result =
-                            condition
-                                .comparison
-                                .keep(&min_value, &max_value, &condition.threshold);
+                        let mut result = condition.comparison.keep(
+                            &min_value,
+                            &max_value,
+                            &condition.threshold,
+                            not,
+                        );
                         if !result && condition.comparison == Comparison::Equal {
                             if let Some(bloom_filter) = bloom_filter {
                                 result = bloom_filter.contains(&condition.threshold);
@@ -224,11 +277,15 @@ pub fn keep_row_group(
             }
             Ok(false)
         }
-        Expression::And(left, right) => Ok(keep_row_group(row_group, bloom_filters, left)?
-            && keep_row_group(row_group, bloom_filters, right)?),
-        Expression::Or(left, right) => Ok(keep_row_group(row_group, bloom_filters, left)?
-            || keep_row_group(row_group, bloom_filters, right)?),
-        Expression::Not(inner) => Ok(!keep_row_group(row_group, bloom_filters, inner)?),
+        Expression::And(left, right) => Ok(match not {
+            true => keep_row_group(row_group, bloom_filters, left, true)? || keep_row_group(row_group, bloom_filters, right, true)?,
+            false => keep_row_group(row_group, bloom_filters, left, false)? && keep_row_group(row_group, bloom_filters, right, false)?,
+        }),
+        Expression::Or(left, right) => Ok(match not {
+            true => keep_row_group(row_group, bloom_filters, left, true)? && keep_row_group(row_group, bloom_filters, right, true)?,
+            false => keep_row_group(row_group, bloom_filters, left, false)? || keep_row_group(row_group, bloom_filters, right, false)?,
+        }),
+        Expression::Not(inner) => Ok(keep_row_group(row_group, bloom_filters, inner, !not)?),
     }
 }
 
@@ -272,6 +329,17 @@ fn bytes_to_value(bytes: &[u8], column_type: &str) -> Result<ThresholdValue, Box
             let double_value = f64::from_le_bytes(bytes.try_into()?);
             Ok(ThresholdValue::Number(double_value))
         }
+        "BOOLEAN" => {
+            if bytes.len() != 1 {
+                return Err("Expected 1 bytes for BOOLEAN".into());
+            }
+            let bool_value = match bytes[0] {
+                0 => false,
+                1 => true,
+                _ => return Err("Invalid Boolean byte value".into()),
+            };
+            Ok(ThresholdValue::Boolean(bool_value))
+        }
         "BYTE_ARRAY" => {
             use std::str;
             let s = str::from_utf8(bytes)?.to_owned();
@@ -302,4 +370,3 @@ pub fn get_column_projection_from_expression(expression: &Expression) -> Vec<Str
     get_column_projection(expression, &mut column_projection);
     column_projection
 }
-

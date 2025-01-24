@@ -1,7 +1,6 @@
 use crate::query::{Comparison, Condition, Expression, ThresholdValue};
 use std::error::Error;
 
-
 pub fn parse_expression(input: &str) -> Result<Expression, Box<dyn Error>> {
     let tokens = tokenize(input)?;
     let mut pos = 0;
@@ -103,6 +102,8 @@ pub fn parse_primary(tokens: &[String], pos: &mut usize) -> Result<Expression, B
 
     let threshold = if let Ok(num) = threshold_token.parse::<f64>() {
         ThresholdValue::Number(num)
+    } else if let Ok(bool) = threshold_token.parse::<bool>() {
+        ThresholdValue::Boolean(bool)
     } else if let Ok(datetime) = parse_iso_datetime(threshold_token) {
         ThresholdValue::Number(datetime)
     } else {
@@ -118,5 +119,5 @@ pub fn parse_primary(tokens: &[String], pos: &mut usize) -> Result<Expression, B
 
 pub fn parse_iso_datetime(s: &str) -> Result<f64, chrono::ParseError> {
     let date_time = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d-%H:%M:%S")?;
-    Ok(date_time.timestamp_micros() as f64)
+    Ok(date_time.and_utc().timestamp_micros() as f64)
 }
