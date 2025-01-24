@@ -1,5 +1,5 @@
 use crate::query::{Comparison, Condition, Expression, ThresholdValue};
-use std::error::Error;
+use std::{error::Error, i64};
 
 pub fn parse_expression(input: &str) -> Result<Expression, Box<dyn Error>> {
     let tokens = tokenize(input)?;
@@ -100,12 +100,14 @@ pub fn parse_primary(tokens: &[String], pos: &mut usize) -> Result<Expression, B
     let threshold_token = &tokens[*pos];
     *pos += 1;
 
-    let threshold = if let Ok(num) = threshold_token.parse::<f64>() {
-        ThresholdValue::Number(num)
+    let threshold = if let Ok(num) = threshold_token.parse::<i64>() {
+        ThresholdValue::Int64(num)
+    } else if let Ok(num) = threshold_token.parse::<f64>() {
+        ThresholdValue::Float64(num)
     } else if let Ok(bool) = threshold_token.parse::<bool>() {
         ThresholdValue::Boolean(bool)
     } else if let Ok(datetime) = parse_iso_datetime(threshold_token) {
-        ThresholdValue::Number(datetime)
+        ThresholdValue::Int64(datetime)
     } else {
         ThresholdValue::Utf8String(threshold_token.to_owned())
     };
@@ -117,7 +119,7 @@ pub fn parse_primary(tokens: &[String], pos: &mut usize) -> Result<Expression, B
     }))
 }
 
-pub fn parse_iso_datetime(s: &str) -> Result<f64, chrono::ParseError> {
+pub fn parse_iso_datetime(s: &str) -> Result<i64, chrono::ParseError> {
     let date_time = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d-%H:%M:%S")?;
-    Ok(date_time.and_utc().timestamp_micros() as f64)
+    Ok(date_time.and_utc().timestamp_micros())
 }

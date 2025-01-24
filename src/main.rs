@@ -7,7 +7,7 @@ mod bloom_filter;
 mod more_row_groups;
 pub mod parse;
 pub mod query;
-mod row_filter;
+// mod row_filter;
 
 const INPUT_FILE_NAME: &str = "output.parquet";
 const COLUMN_NAME: &str = "memoryUsed";
@@ -39,12 +39,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut file = File::open(&file_path).await?;
     let metadata = ArrowReaderMetadata::load_async(&mut file, Default::default()).await?;
     let file_metadata = metadata.metadata().file_metadata();
-    let column_index_map = query::get_column_name_to_index_map(&file_metadata);
+    let column_maps = query::get_column_maps(&file_metadata);
 
     let metadata_entry = MetadataEntry {
         file_path,
         metadata,
-        column_index_map,
+        column_maps,
     };
 
     cached_metadata.push(metadata_entry);
@@ -61,12 +61,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
             let mut file = File::open(&file_path).await?;
             let metadata = ArrowReaderMetadata::load_async(&mut file, Default::default()).await?;
             let file_metadata = metadata.metadata().file_metadata();
-            let column_index_map = query::get_column_name_to_index_map(&file_metadata);
+            let column_maps = query::get_column_maps(&file_metadata);
             //TODO: Insert into cache
             &MetadataEntry {
                 file_path,
                 metadata,
-                column_index_map,
+                column_maps,
             }
         }
     };

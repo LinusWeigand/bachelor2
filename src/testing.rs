@@ -2,8 +2,9 @@ use core::f32;
 use std::{error::Error, path::PathBuf, sync::Arc};
 
 use arrow::{
-    array::{BooleanArray, Date64Array, Float32Array, Int64Array, RecordBatch, StringArray},
-    datatypes::{DataType, Field, Schema}, util::pretty::print_batches,
+    array::{BooleanArray, Date64Array, Float32Array, Int32Array, Int64Array, RecordBatch, StringArray},
+    datatypes::{DataType, Field, Schema},
+    util::pretty::print_batches,
 };
 use parquet::{
     arrow::{arrow_reader::ArrowReaderMetadata, AsyncArrowWriter},
@@ -17,11 +18,11 @@ const ROWS_PER_GROUP: usize = 2;
 const INPUT_FILE_PATH: &str = "testing_input.parquet";
 const OUTPUT_FILE_PATH: &str = "testing_output.parquet";
 
+pub mod bloom_filter;
+pub mod more_row_groups;
 mod parse;
 pub mod query;
-pub mod bloom_filter;
-pub mod row_filter;
-pub mod more_row_groups;
+// pub mod row_filter;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -92,26 +93,24 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let bloom_filters =
         more_row_groups::prepare_file(input_file, output_file, ROWS_PER_GROUP).await?;
 
-
     // Get Metadata
 
     let file_path = PathBuf::from(OUTPUT_FILE_PATH);
     let mut file = File::open(&file_path).await?;
     let metadata = ArrowReaderMetadata::load_async(&mut file, Default::default()).await?;
     let file_metadata = metadata.metadata().file_metadata();
-    let column_index_map = query::get_column_name_to_index_map(&file_metadata);
+    let column_maps = query::get_column_maps(&file_metadata);
 
     let metadata_entry = MetadataEntry {
         file_path,
         metadata,
-        column_index_map,
+        column_maps,
     };
 
     // Query
 
-    let input = "NOT Age >= 10";
+    let input = "Birthday == 2025-1-1-12:1:1";
     // let input = "";
-
 
     let expression = if input.is_empty() {
         None
@@ -120,11 +119,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
     };
     // println!("{:#?}", expression);
 
-
     // let select_columns = Some(vec!["Graduated".to_owned()]);
     let select_columns = None;
-    
-    let results = query::smart_query_parquet(&metadata_entry, bloom_filters, expression, select_columns).await?;
+
+    let results =
+        query::smart_query_parquet(&metadata_entry, bloom_filters, expression, select_columns)
+            .await?;
 
     println!("INPUT: {}", input);
     print_batches(&results)?;

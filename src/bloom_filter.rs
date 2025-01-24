@@ -1,6 +1,5 @@
 use std::{
-    error::Error,
-    hash::{DefaultHasher, Hash, Hasher},
+    error::Error, fmt::Debug, hash::{DefaultHasher, Hash, Hasher}
 };
 
 use arrow::{
@@ -15,7 +14,7 @@ use arrow::{
 use crate::query::ThresholdValue;
 
 pub struct BloomFilter {
-    bit_array: Vec<bool>,
+    pub bit_array: Vec<bool>,
     size: usize,
     num_hashes: usize,
 }
@@ -29,25 +28,33 @@ impl BloomFilter {
         }
     }
 
-    pub fn insert<T: Hash>(&mut self, item: &T) {
+    pub fn insert<T: Hash + Debug>(&mut self, item: &T) {
         for index in self.hash(item) {
             self.bit_array[index] = true;
         }
     }
 
-    pub fn contains(&self, item: &ThresholdValue) -> bool {
-        match item {
-            ThresholdValue::Number(value) => self
-                .hash(&value.to_bits())
-                .iter()
-                .all(|&index| self.bit_array[index]),
-            ThresholdValue::Boolean(value) => {
-                self.hash(&value).iter().all(|&index| self.bit_array[index])
-            }
-            ThresholdValue::Utf8String(value) => {
-                self.hash(value).iter().all(|&index| self.bit_array[index])
-            }
+    pub fn contains<T: Hash + Debug>(&self, item: &T) -> bool {
+        self.hash(item).iter().all(|&index| self.bit_array[index])
+    }
+
+    fn hash<T: Hash + Debug>(&self, item: &T) -> Vec<usize> {
+        let mut indices = Vec::with_capacity(self.num_hashes);
+        let mut hasher = DefaultHasher::new();
+
+        for i in 0..self.num_hashes {
+            hasher.write_usize(i);
+            item.hash(&mut hasher);
+            let hash_value = hasher.finish();
+            indices.push((hash_value as usize) % self.size);
+            hasher = DefaultHasher::new();
         }
+        let debug_repres = format!("{:?}", item);
+        if debug_repres == "false" || debug_repres == "true" {
+            // println!("Hasing: {:?}", item);
+            // println!("Indices: {:?}", indices);
+        }
+        indices
     }
 
     pub fn populate_from_column(&mut self, column: &dyn Array) -> Result<(), Box<dyn Error>> {
@@ -96,7 +103,10 @@ impl BloomFilter {
                 for i in 0..col.len() {
                     if col.is_valid(i) {
                         let val = col.value(i);
+                        println!("Inserting Int64 into Bloom Filter: {}", &val);
                         self.insert(&val);
+                        let result = self.contains(&val);
+                        println!("Result would be: contains: {}", result);
                     }
                 }
             }
@@ -297,17 +307,5 @@ impl BloomFilter {
         Ok(())
     }
 
-    fn hash<T: Hash>(&self, item: &T) -> Vec<usize> {
-        let mut indices = Vec::with_capacity(self.num_hashes);
-        let mut hasher = DefaultHasher::new();
-
-        for i in 0..self.num_hashes {
-            hasher.write_usize(i);
-            item.hash(&mut hasher);
-            let hash_value = hasher.finish();
-            indices.push((hash_value as usize) % self.size);
-            hasher = DefaultHasher::new();
-        }
-        indices
-    }
+   
 }
