@@ -100,12 +100,18 @@ pub fn parse_primary(tokens: &[String], pos: &mut usize) -> Result<Expression, B
     let threshold_token = &tokens[*pos];
     *pos += 1;
 
-    let threshold = if let Ok(num) = threshold_token.parse::<i64>() {
-        ThresholdValue::Int64(num)
-    } else if let Ok(num) = threshold_token.parse::<f64>() {
-        ThresholdValue::Float64(num)
+    let threshold = if let Ok(datetime) = parse_iso_datetime(threshold_token) {
+        ThresholdValue::Int64(datetime)
     } else if let Ok(bool) = threshold_token.parse::<bool>() {
         ThresholdValue::Boolean(bool)
+    } else if threshold_token.contains('.') {
+        if let Ok(num) = threshold_token.parse::<f64>() {
+            ThresholdValue::Float64(num)
+        } else {
+            ThresholdValue::Utf8String(threshold_token.to_owned())
+        }
+    } else if let Ok(num) = threshold_token.parse::<i64>() {
+        ThresholdValue::Int64(num)
     } else if let Ok(datetime) = parse_iso_datetime(threshold_token) {
         ThresholdValue::Int64(datetime)
     } else {

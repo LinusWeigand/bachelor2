@@ -2,7 +2,7 @@ use core::f32;
 use std::{error::Error, path::PathBuf, sync::Arc};
 
 use arrow::{
-    array::{BooleanArray, Date64Array, Float32Array, Int32Array, Int64Array, RecordBatch, StringArray},
+    array::{BooleanArray, Date64Array, Float32Array, Int32Array, Int64Array, RecordBatch, StringArray, UInt8Array},
     datatypes::{DataType, Field, Schema},
     util::pretty::print_batches,
 };
@@ -45,7 +45,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let array_names = Arc::new(StringArray::from(vec![
         "Alice", "Bob", "Charlie", "Dave", "Eve", "Frank",
     ]));
-    let array_age = Arc::new(Int64Array::from(vec![10, i64::MAX, 30, i64::MIN, 50, 0]));
+    let array_age = Arc::new(UInt8Array::from(vec![10, u8::MAX, 30, u8::MIN, 50, 0]));
     let array_birthday = Arc::new(Date64Array::from(vec![
         1420074061000,
         1104541261000,
@@ -109,7 +109,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // Query
 
-    let input = "Birthday == 2025-1-1-12:1:1";
+    let input = "Age == 10";
     // let input = "";
 
     let expression = if input.is_empty() {
@@ -134,7 +134,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
 fn build_schema() -> Schema {
     let name = Field::new("Name", DataType::Utf8, false);
-    let age = Field::new("Age", DataType::Int64, false);
+    let age = Field::new("Age", DataType::UInt8, false);
     let birthday = Field::new("Birthday", DataType::Date64, false);
     let graduated = Field::new("Graduated", DataType::Boolean, false);
     let float = Field::new("Float", DataType::Float32, false);

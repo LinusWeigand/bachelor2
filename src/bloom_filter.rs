@@ -8,10 +8,8 @@ use arrow::{
         Float64Array, Int16Array, Int32Array, Int64Array, Int8Array, StringArray, StringViewArray,
         UInt16Array, UInt32Array, UInt64Array, UInt8Array,
     },
-    datatypes::DataType,
+    datatypes::{ArrowNativeType, DataType},
 };
-
-use crate::query::ThresholdValue;
 
 pub struct BloomFilter {
     pub bit_array: Vec<bool>,
@@ -66,7 +64,7 @@ impl BloomFilter {
                 };
                 for i in 0..col.len() {
                     if col.is_valid(i) {
-                        let val = col.value(i);
+                        let val = col.value(i) as i64;
                         self.insert(&val);
                     }
                 }
@@ -78,7 +76,7 @@ impl BloomFilter {
                 };
                 for i in 0..col.len() {
                     if col.is_valid(i) {
-                        let val = col.value(i);
+                        let val = col.value(i) as i64;
                         self.insert(&val);
                     }
                 }
@@ -90,8 +88,11 @@ impl BloomFilter {
                 };
                 for i in 0..col.len() {
                     if col.is_valid(i) {
-                        let val = col.value(i);
+                        let val = col.value(i) as i64;
+                        println!("Inserting Int32 into Bloom Filter: {}", &val);
                         self.insert(&val);
+                        let result = self.contains(&val);
+                        println!("Result would be: contains: {}", result);
                     }
                 }
             }
@@ -129,7 +130,7 @@ impl BloomFilter {
                 };
                 for i in 0..col.len() {
                     if col.is_valid(i) {
-                        let val = col.value(i);
+                        let val = col.value(i) as i64;
                         self.insert(&val);
                     }
                 }
@@ -141,7 +142,7 @@ impl BloomFilter {
                 };
                 for i in 0..col.len() {
                     if col.is_valid(i) {
-                        let val = col.value(i);
+                        let val = col.value(i) as i64;
                         self.insert(&val);
                     }
                 }
@@ -153,7 +154,7 @@ impl BloomFilter {
                 };
                 for i in 0..col.len() {
                     if col.is_valid(i) {
-                        let val = col.value(i);
+                        let val = col.value(i) as i64;
                         self.insert(&val);
                     }
                 }
@@ -165,7 +166,7 @@ impl BloomFilter {
                 };
                 for i in 0..col.len() {
                     if col.is_valid(i) {
-                        let val = col.value(i);
+                        let val = col.value(i) as i64;
                         self.insert(&val);
                     }
                 }
@@ -177,8 +178,12 @@ impl BloomFilter {
                 };
                 for i in 0..col.len() {
                     if col.is_valid(i) {
-                        let val = col.value(i).to_bits();
-                        self.insert(&val);
+                        let val = col.value(i).to_i64();
+                        if let Some(val) = val {
+                            self.insert(&val);
+                        } else {
+                            println!("Float16 could not be casted as i64 and was not inserted into the bloom filter");
+                        }
                     }
                 }
             }
@@ -189,7 +194,7 @@ impl BloomFilter {
                 };
                 for i in 0..col.len() {
                     if col.is_valid(i) {
-                        let val = col.value(i).to_bits();
+                        let val = col.value(i).to_i64();
                         self.insert(&val);
                     }
                 }
@@ -201,7 +206,7 @@ impl BloomFilter {
                 };
                 for i in 0..col.len() {
                     if col.is_valid(i) {
-                        let val = col.value(i).to_bits();
+                        let val = col.value(i) as i64;
                         self.insert(&val);
                     }
                 }
@@ -213,7 +218,7 @@ impl BloomFilter {
                 };
                 for i in 0..col.len() {
                     if col.is_valid(i) {
-                        let val = col.value(i);
+                        let val = col.value(i) as i64;
                         self.insert(&val);
                     }
                 }

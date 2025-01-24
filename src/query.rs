@@ -55,15 +55,8 @@ impl ExtractValue for ThresholdValue {
 }
 #[derive(Debug, Clone)]
 pub enum ThresholdValue {
-    Int8(i8),
-    Int16(i16),
-    Int32(i32),
     Int64(i64),
-    UInt8(u8),
-    UInt16(u16),
-    UInt32(u32),
     UInt64(u64),
-    Float32(f32),
     Float64(f64),
     Boolean(bool),
     Utf8String(String),
@@ -160,39 +153,9 @@ impl Comparison {
     ) -> bool {
         match (row_group_min, row_group_max, user_threshold) {
             (
-                ThresholdValue::UInt8(min),
-                ThresholdValue::UInt8(max),
-                ThresholdValue::UInt8(v),
-            ) => compare(min, max, v, self, not),
-            (
-                ThresholdValue::UInt16(min),
-                ThresholdValue::UInt16(max),
-                ThresholdValue::UInt16(v),
-            ) => compare(min, max, v, self, not),
-            (
-                ThresholdValue::UInt32(min),
-                ThresholdValue::UInt32(max),
-                ThresholdValue::UInt32(v),
-            ) => compare(min, max, v, self, not),
-            (
                 ThresholdValue::UInt64(min),
                 ThresholdValue::UInt64(max),
                 ThresholdValue::UInt64(v),
-            ) => compare(min, max, v, self, not),
-            (
-                ThresholdValue::Int8(min),
-                ThresholdValue::Int8(max),
-                ThresholdValue::Int8(v),
-            ) => compare(min, max, v, self, not),
-            (
-                ThresholdValue::Int16(min),
-                ThresholdValue::Int16(max),
-                ThresholdValue::Int16(v),
-            ) => compare(min, max, v, self, not),
-            (
-                ThresholdValue::Int32(min),
-                ThresholdValue::Int32(max),
-                ThresholdValue::Int32(v),
             ) => compare(min, max, v, self, not),
             (
                 ThresholdValue::Int64(min),
@@ -381,20 +344,10 @@ pub fn keep_row_group(
                         if result && condition.comparison == Comparison::Equal {
                             if let Some(bloom_filter) = bloom_filter {
                                 result = match &condition.threshold {
-                                    ThresholdValue::UInt8(v) => bloom_filter.contains(&v),
-                                    ThresholdValue::UInt16(v) => bloom_filter.contains(&v),
-                                    ThresholdValue::UInt32(v) => bloom_filter.contains(&v),
                                     ThresholdValue::UInt64(v) => bloom_filter.contains(&v),
-                                    ThresholdValue::Int8(v) => bloom_filter.contains(&v),
-                                    ThresholdValue::Int16(v) => bloom_filter.contains(&v),
-                                    ThresholdValue::Int32(v) => bloom_filter.contains(&v),
                                     ThresholdValue::Int64(v) => bloom_filter.contains(&v),
                                     ThresholdValue::Boolean(v) => bloom_filter.contains(&v),
                                     ThresholdValue::Utf8String(v) => bloom_filter.contains(&v),
-                                    ThresholdValue::Float32(v) => {
-                                        let value = *v as i32;
-                                        bloom_filter.contains(&value)
-                                    },
                                     ThresholdValue::Float64(v) => {
                                         let value = *v as i32;
                                         bloom_filter.contains(&value)
@@ -477,7 +430,7 @@ fn bytes_to_value(bytes: &[u8], column_type: &str) -> Result<ThresholdValue, Box
                 return Err("Expected 4 bytes for INT32".into());
             }
             let v = i32::from_le_bytes(bytes.try_into()?);
-            Ok(ThresholdValue::Int32(v))
+            Ok(ThresholdValue::Int64(v as i64))
         },
         "INT64" => {
             if bytes.len() != 8 {
@@ -491,7 +444,7 @@ fn bytes_to_value(bytes: &[u8], column_type: &str) -> Result<ThresholdValue, Box
                 return Err("Expected 4 bytes for FLOAT".into());
             }
             let v = f32::from_le_bytes(bytes.try_into()?);
-            Ok(ThresholdValue::Float32(v))
+            Ok(ThresholdValue::Float64(v as f64))
         }
         "DOUBLE" => {
             if bytes.len() != 8 {

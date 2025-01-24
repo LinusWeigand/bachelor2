@@ -110,7 +110,7 @@ fn insert_bloom_filters_from_batch(
         // println!("Populating Bloom Filter Column: {}", column_index);
         let column = batch.column(column_index);
 
-        let mut bloom_filter = BloomFilter::new(10000, 3);
+        let mut bloom_filter = BloomFilter::new(7, 2);
         let entry = match bloom_filter.populate_from_column(column) {
             Ok(_) => Some(bloom_filter),
             Err(_) => None,
@@ -128,9 +128,9 @@ fn insert_bloom_filters_from_batch(
                 column_name: column_name.clone(),
             };
             if &column_name == "Age" {
-                // println!("ColumnChunkLocation: {:#?}", column_chunk_location);
+                println!("ColumnChunkLocation: {:#?}", column_chunk_location);
                 if let Some(entry) = &entry {
-                    // println!("Bit Array: {:?}", entry.bit_array);
+                    println!("Bit Array: {:?}", entry.bit_array);
                 }
             }
             bloom_filters.insert(
