@@ -101,8 +101,8 @@ impl Comparison {
                 Comparison::LessThan => true,
                 Comparison::LessThanOrEqual => true,
                 Comparison::Equal => match not {
-                    true => v == min || v == max,
-                    false => v != min || v != max,
+                    false => v == min || v == max,
+                    true => v != min || v != max,
                 },
                 Comparison::GreaterThanOrEqual => true,
                 Comparison::GreaterThan => true,
@@ -195,11 +195,11 @@ pub async fn smart_query_parquet(
             predicate_function(expression.clone()),
         ));
         let predicates: Vec<Box<dyn ArrowPredicate>> = vec![predicate];
-        let row_filter: RowFilter = RowFilter::new(predicates);
+        let _row_filter: RowFilter = RowFilter::new(predicates);
 
         stream = stream
             .with_row_groups(row_groups)
-            .with_row_filter(row_filter);
+            // .with_row_filter(row_filter);
     }
 
     let mut stream = stream.build()?;
@@ -248,8 +248,9 @@ pub fn keep_row_group(
                 .enumerate()
                 .find(|(_, c)| c.column_path().string() == condition.column_name)
             {
+                // println!("Found column");
                 let column_type = column.column_type().to_string();
-                let bloom_filter = &bloom_filters[index];
+                let _bloom_filter = &bloom_filters[index];
                 if let Some(stats) = column.statistics() {
                     if let (Some(min_bytes), Some(max_bytes)) =
                         (stats.min_bytes_opt(), stats.max_bytes_opt())
@@ -259,17 +260,17 @@ pub fn keep_row_group(
                         // println!("MIN: {:#?}", min_value);
                         // println!("MAX: {:#?}", max_value);
                         // println!("Threshold: {:#?}", &condition.threshold);
-                        let mut result = condition.comparison.keep(
+                        let result = condition.comparison.keep(
                             &min_value,
                             &max_value,
                             &condition.threshold,
                             not,
                         );
-                        if !result && condition.comparison == Comparison::Equal {
-                            if let Some(bloom_filter) = bloom_filter {
-                                result = bloom_filter.contains(&condition.threshold);
-                            }
-                        }
+                        // if !result && condition.comparison == Comparison::Equal {
+                        //     if let Some(bloom_filter) = bloom_filter {
+                        //         result = bloom_filter.contains(&condition.threshold);
+                        //     }
+                        // }
 
                         return Ok(result);
                     }

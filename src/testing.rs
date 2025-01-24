@@ -109,8 +109,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // Query
 
-    // let input = "Graduated == false";
-    let input = "";
+    let input = "NOT Graduated == false";
+    // let input = "";
 
 
     let expression = if input.is_empty() {
