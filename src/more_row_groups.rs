@@ -13,12 +13,6 @@ use tokio::fs::File;
 
 use crate::{bloom_filter::BloomFilter, query::{ColumnMaps}};
 
-#[derive(Eq, Hash, PartialEq, Debug)]
-pub struct ColumnChunkLocation {
-    pub row_group_index: usize,
-    pub column_name: String,
-}
-
 const ROWS_PER_GROUP: usize = 2;
 
 // increase row groups
@@ -27,8 +21,8 @@ pub async fn prepare_file(
     input_file: File,
     output_file: File,
     rows_per_group: usize,
-) -> Result<HashMap<ColumnChunkLocation, Option<BloomFilter>>, Box<dyn Error>> {
-    let mut bloom_filters: HashMap<ColumnChunkLocation, Option<BloomFilter>> = HashMap::new();
+) -> Result<Vec<Vec<Option<BloomFilter>>>, Box<dyn Error>> {
+    let mut bloom_filters = Vec::new();
     let mut row_group_index = 0;
 
     let builder = ParquetRecordBatchStreamBuilder::new(input_file)
@@ -58,7 +52,8 @@ pub async fn prepare_file(
 
     let mut writer = AsyncArrowWriter::try_new(output_file, record_batch.schema(), Some(props))?;
 
-    insert_bloom_filters_from_batch(&record_batch, row_group_index, &column_names, &mut bloom_filters);
+    let row_group_bloom_filters = get_bloom_filters_from_batch(&record_batch);
+    bloom_filters.push(row_group_bloom_filters);
 
     writer.write(&record_batch).await?;
     writer.flush().await?;
@@ -66,7 +61,8 @@ pub async fn prepare_file(
     while let Some(record_batch) = get_next_item_from_reader(&mut pinned_stream).await {
         row_group_index += 1;
 
-        insert_bloom_filters_from_batch(&record_batch, row_group_index, &column_names, &mut bloom_filters);
+        let row_group_bloom_filters = get_bloom_filters_from_batch(&record_batch);
+        bloom_filters.push(row_group_bloom_filters);
 
         writer.write(&record_batch).await?;
         writer.flush().await?;
@@ -95,22 +91,18 @@ fn get_column_maps(schema: Schema, columns: &Vec<String>) -> ColumnMaps {
     ColumnMaps { index_to_name, name_to_index}
 }
 
-fn insert_bloom_filters_from_batch(
+fn get_bloom_filters_from_batch(
     batch: &RecordBatch,
-    row_group_index: usize,
-    column_names: &Vec<String>,
-    bloom_filters: &mut HashMap<ColumnChunkLocation, Option<BloomFilter>>,
-) {
+) -> Vec<Option<BloomFilter>> {
+    let mut result = Vec::new();
     let num_cols = batch.num_columns();
 
-    let schema = batch.schema().as_ref().clone();
-    let column_maps = get_column_maps(schema, &column_names);
 
     for column_index in 0..num_cols {
         // println!("Populating Bloom Filter Column: {}", column_index);
         let column = batch.column(column_index);
 
-        let mut bloom_filter = BloomFilter::new(1000, 3);
+        let mut bloom_filter = BloomFilter::new(10000, 3);
         let entry = match bloom_filter.populate_from_column(column) {
             Ok(_) => Some(bloom_filter),
             Err(_) => None,
@@ -121,24 +113,9 @@ fn insert_bloom_filters_from_batch(
             println!("Couldn't get a bloom filter for column: {}", column_index);
         }
 
-        if let Some(column_name) = column_maps.index_to_name.get(&column_index) {
-            let column_name = column_name.to_owned();
-            let column_chunk_location = ColumnChunkLocation {
-                row_group_index,
-                column_name: column_name.clone(),
-            };
-            if &column_name == "Birthday" {
-                // println!("ColumnChunkLocation: {:#?}", column_chunk_location);
-                if let Some(entry) = &entry {
-                    // println!("Bit Array: {:?}", entry.bit_array);
-                }
-            }
-            bloom_filters.insert(
-                column_chunk_location,
-                entry,
-            );
-        }
+        result.push(entry);
     }
+    result
 }
 
 async fn get_next_item_from_reader(

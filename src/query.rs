@@ -12,7 +12,7 @@ use parquet::{
 use tokio::fs::File;
 
 use crate::{
-    bloom_filter::BloomFilter, more_row_groups::ColumnChunkLocation,
+    bloom_filter::BloomFilter,
 };
 
 #[derive(PartialEq, Clone, Debug)]
@@ -188,7 +188,7 @@ pub struct MetadataEntry {
 
 pub async fn smart_query_parquet(
     metadata_entry: &MetadataEntry,
-    bloom_filters: HashMap<ColumnChunkLocation, Option<BloomFilter>>,
+    bloom_filters: Vec<Vec<Option<BloomFilter>>>,
     expression: Option<Expression>,
     select_columns: Option<Vec<String>>,
 ) -> Result<Vec<RecordBatch>, Box<dyn Error>> {
@@ -225,7 +225,7 @@ pub async fn smart_query_parquet(
         for i in 0..metadata.num_row_groups() {
             let row_group_metadata = metadata.row_group(i);
             let is_keep =
-                keep_row_group(row_group_metadata, &bloom_filters, i, &expression, false, &metadata_entry.column_maps)?;
+                keep_row_group(row_group_metadata, &bloom_filters[i], i, &expression, false, &metadata_entry.column_maps)?;
             println!("Row Group: {}, Skip: {}", i, !is_keep);
             if is_keep {
                 row_groups.push(i);
@@ -286,7 +286,7 @@ pub async fn get_next_item_from_reader(
 
 pub fn keep_row_group(
     row_group: &RowGroupMetaData,
-    bloom_filters: &HashMap<ColumnChunkLocation, Option<BloomFilter>>,
+    bloom_filters: &Vec<Option<BloomFilter>>,
     row_group_index: usize,
     expression: &Expression,
     not: bool,
@@ -294,23 +294,18 @@ pub fn keep_row_group(
 ) -> Result<bool, Box<dyn Error>> {
     match expression {
         Expression::Condition(condition) => {
-            if let Some(column) = row_group
+            if let Some((column_index, column)) = row_group
                 .columns()
                 .iter()
-                .find(|c| c.column_path().string() == condition.column_name)
+                .enumerate()
+                .find(|(_, c)| c.column_path().string() == condition.column_name)
             {
                 // println!("Found column");
                 let column_type = column.column_type().to_string();
-                let column_name = column.column_path().to_string().trim().trim_matches('"').to_string();
 
-                let column_name = column_name.to_owned();
-
-                let column_chunk_location = ColumnChunkLocation {
-                    row_group_index,
-                    column_name,
-                };
                 // println!("ColumnChunkLocation to find: {:#?}", column_chunk_location);
-                let bloom_filter = match bloom_filters.get(&column_chunk_location) {
+
+                let bloom_filter = match bloom_filters.get(column_index) {
                     Some(v) => v,
                     None => &None,
                 };
