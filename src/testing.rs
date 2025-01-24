@@ -109,7 +109,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // Query
 
-    let input = "NOT Graduated == false";
+    let input = "NOT Age >= 10";
     // let input = "";
 
 

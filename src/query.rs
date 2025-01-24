@@ -74,23 +74,23 @@ impl Comparison {
             ) => match self {
                 Comparison::LessThan => match not {
                     false => min < v,
-                    true => min >= v,
+                    true => max >= v,
                 },
                 Comparison::LessThanOrEqual => match not {
                     false => min <= v,
-                    true => min > v,
+                    true => max > v,
                 },
                 Comparison::Equal => match not {
                     false => v >= min && v <= max,
-                    true => v == min && v == max,
+                    true => !(v == min && v == max),
                 }
                 Comparison::GreaterThanOrEqual => match not {
                     false => max >= v,
-                    true => max < v,
+                    true => min < v,
                 },
                 Comparison::GreaterThan => match not {
                     false => max > v,
-                    true => max <= v,
+                    true => min <= v,
                 },
             },
             (
@@ -114,11 +114,11 @@ impl Comparison {
             ) => match self {
                 Comparison::LessThan => match not {
                     false => min < v,
-                    true => min >= v,
+                    true => max >= v,
                 },
                 Comparison::LessThanOrEqual => match not {
                     false => min <= v,
-                    true => min > v,
+                    true => max > v,
                 },
                 Comparison::Equal => match not {
                     false => v >= min && v <= max,
@@ -126,11 +126,11 @@ impl Comparison {
                 }
                 Comparison::GreaterThanOrEqual => match not {
                     false => max >= v,
-                    true => max < v,
+                    true => min < v,
                 },
                 Comparison::GreaterThan => match not {
                     false => max > v,
-                    true => max <= v,
+                    true => min <= v,
                 },
             },
             _ => true,
