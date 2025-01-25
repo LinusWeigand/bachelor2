@@ -11,9 +11,8 @@ use parquet::{
 };
 use tokio::fs::File;
 
-use crate::bloom_filter::BloomFilter;
+use crate::{bloom_filter::BloomFilter, ROWS_PER_GROUP};
 
-const ROWS_PER_GROUP: usize = 2;
 
 // increase row groups
 // add bloom filter

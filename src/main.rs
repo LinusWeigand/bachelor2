@@ -7,7 +7,8 @@ mod bloom_filter;
 mod more_row_groups;
 pub mod parse;
 pub mod query;
-// mod row_filter;
+pub mod row_filter;
+pub mod utils;
 
 const INPUT_FILE_NAME: &str = "output.parquet";
 const COLUMN_NAME: &str = "memoryUsed";

@@ -14,7 +14,7 @@ use parquet::{
 
 use query::MetadataEntry;
 use tokio::fs::{File, OpenOptions};
-const ROWS_PER_GROUP: usize = 2;
+const ROWS_PER_GROUP: usize = 3;
 const INPUT_FILE_PATH: &str = "testing_input.parquet";
 const OUTPUT_FILE_PATH: &str = "testing_output.parquet";
 
@@ -22,7 +22,8 @@ pub mod bloom_filter;
 pub mod more_row_groups;
 mod parse;
 pub mod query;
-// pub mod row_filter;
+pub mod row_filter;
+pub mod utils;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -109,10 +110,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // Query
 
-    // let input = "Birthday == 2004-12-31-23:1:1";
-    let input = "Birthday == 2005-1-1-1:1:1";
+    let input = &format!("Float == {}.", f32::MAX);
+    // let input = &format!("Float > -10.");
     // let input = "";
 
+    println!("INPUT: {}", input);
     let expression = if input.is_empty() {
         None
     } else {

@@ -1,17 +1,17 @@
 use std::{collections::HashMap, error::Error, path::PathBuf, pin::Pin};
 
-use arrow::array::RecordBatch;
+use arrow::{array::RecordBatch};
 use futures::StreamExt;
 use parquet::{
     arrow::{
-        arrow_reader::ArrowReaderMetadata, async_reader::ParquetRecordBatchStream,
+        arrow_reader::{ArrowPredicate, ArrowPredicateFn, ArrowReaderMetadata, RowFilter}, async_reader::ParquetRecordBatchStream,
         ParquetRecordBatchStreamBuilder, ProjectionMask,
     },
     file::metadata::{FileMetaData, RowGroupMetaData},
 };
 use tokio::fs::File;
 
-use crate::bloom_filter::BloomFilter;
+use crate::{bloom_filter::BloomFilter, row_filter, utils};
 
 #[derive(PartialEq, Clone, Debug)]
 pub enum Comparison {
@@ -83,29 +83,7 @@ pub fn compare<T: Ord>(min: T, max: T, v: T, comparison: &Comparison, not: bool)
     }
 }
 
-pub trait Float: Copy + PartialOrd {
-    fn abs(self) -> Self;
-    fn equal(self, other: Self) -> bool;
-}
-
-impl Float for f32 {
-    fn abs(self) -> Self {
-        self.abs()
-    }
-    fn equal(self, other: Self) -> bool {
-        (self - other).abs() < f32::EPSILON
-    }
-}
-
-impl Float for f64 {
-    fn abs(self) -> Self {
-        self.abs()
-    }
-    fn equal(self, other: Self) -> bool {
-        (self - other).abs() < f64::EPSILON
-    }
-}
-pub fn compare_floats<T: Float>(min: T, max: T, v: T, comparison: &Comparison, not: bool) -> bool {
+pub fn compare_floats<T: utils::Float>(min: T, max: T, v: T, comparison: &Comparison, not: bool) -> bool {
     match comparison {
         Comparison::LessThan => match not {
             false => min < v,
@@ -131,7 +109,7 @@ pub fn compare_floats<T: Float>(min: T, max: T, v: T, comparison: &Comparison, n
 }
 
 impl Comparison {
-    pub fn keep(
+    pub fn keep_row_group(
         &self,
         row_group_min: &ThresholdValue,
         row_group_max: &ThresholdValue,
@@ -141,7 +119,10 @@ impl Comparison {
         match (row_group_min, row_group_max, user_threshold) {
             (ThresholdValue::Int64(min), ThresholdValue::Int64(max), ThresholdValue::Int64(v)) => {
                 compare(min, max, v, self, not)
-            }
+            },
+            (ThresholdValue::Float64(min), ThresholdValue::Float64(max), ThresholdValue::Float64(v)) => {
+                compare_floats(*min, *max, *v, self, not)
+            },
             (
                 ThresholdValue::Boolean(min),
                 ThresholdValue::Boolean(max),
@@ -205,42 +186,41 @@ pub async fn smart_query_parquet(
 
     if let Some(expression) = expression {
         // Filter Row Groups
-        let mut row_groups: Vec<usize> = Vec::new();
-
-        for i in 0..metadata.num_row_groups() {
-            let row_group_metadata = metadata.row_group(i);
-            let is_keep = keep_row_group(
-                row_group_metadata,
-                &bloom_filters[i],
-                i,
-                &expression,
-                false,
-                &metadata_entry.column_maps,
-            )?;
-            println!("Row Group: {}, Skip: {}", i, !is_keep);
-            if is_keep {
-                row_groups.push(i);
-            }
-        }
-        println!("Filtered Row Groups: {}", row_groups.len());
-
-        stream = stream.with_row_groups(row_groups)
+        // let mut row_groups: Vec<usize> = Vec::new();
+        //
+        // for i in 0..metadata.num_row_groups() {
+        //     let row_group_metadata = metadata.row_group(i);
+        //     let is_keep = keep_row_group(
+        //         row_group_metadata,
+        //         &bloom_filters[i],
+        //         i,
+        //         &expression,
+        //         false,
+        //         &metadata_entry.column_maps,
+        //     )?;
+        //     if is_keep {
+        //         row_groups.push(i);
+        //     }
+        // }
+        //
+        // stream = stream.with_row_groups(row_groups);
         // Filter Rows
-        // let filter_columns: Vec<String> = get_column_projection_from_expression(&expression);
-        // let column_indices: Vec<usize> = filter_columns
-        //     .iter()
-        //     .filter_map(|column| metadata_entry.column_maps.name_to_index.get(column).map(|&x| x))
-        //     .collect();
-        // let projection =
-        //     ProjectionMask::roots(metadata.file_metadata().schema_descr(), column_indices);
-        // let predicate: Box<dyn ArrowPredicate> = Box::new(ArrowPredicateFn::new(
-        //     projection,
-        //     predicate_function(expression.clone()),
-        // ));
-        // let predicates: Vec<Box<dyn ArrowPredicate>> = vec![predicate];
-        // let _row_filter: RowFilter = RowFilter::new(predicates);
-        // stream = stream
-        // .with_row_filter(row_filter);
+        //
+        let filter_columns: Vec<String> = get_column_projection_from_expression(&expression);
+        let column_indices: Vec<usize> = filter_columns
+            .iter()
+            .filter_map(|column| metadata_entry.column_maps.name_to_index.get(column).map(|&x| x))
+            .collect();
+        let projection =
+            ProjectionMask::roots(metadata.file_metadata().schema_descr(), column_indices);
+        let predicate: Box<dyn ArrowPredicate> = Box::new(ArrowPredicateFn::new(
+            projection,
+            row_filter::predicate_function(expression.clone()),
+        ));
+        let predicates: Vec<Box<dyn ArrowPredicate>> = vec![predicate];
+        let row_filter: RowFilter = RowFilter::new(predicates);
+        stream = stream
+        .with_row_filter(row_filter);
     }
 
     let mut stream = stream.build()?;
@@ -304,15 +284,14 @@ pub fn keep_row_group(
                     {
                         let min_value = bytes_to_value(min_bytes, &column_type)?;
                         let max_value = bytes_to_value(max_bytes, &column_type)?;
-                        println!("MIN: {:#?}", min_value);
-                        println!("MAX: {:#?}", max_value);
-                        println!("Threshold: {:#?}", &condition.threshold);
-                        let mut result = condition.comparison.keep(
+                        let mut result = condition.comparison.keep_row_group(
                             &min_value,
                             &max_value,
                             &condition.threshold,
                             not,
                         );
+
+                        println!("MIN, MAX Filter Keep: {}", result);
                         if result && condition.comparison == Comparison::Equal {
                             if let Some(bloom_filter) = bloom_filter {
                                 result = match &condition.threshold {
@@ -325,7 +304,7 @@ pub fn keep_row_group(
                                     }
                                 };
 
-                                println!("Bloom Result: {}", result);
+                                println!("Bloom Result Keep: {}", result);
                             }
                         }
 

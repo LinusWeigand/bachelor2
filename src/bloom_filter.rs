@@ -1,5 +1,7 @@
 use std::{
-    error::Error, fmt::Debug, hash::{DefaultHasher, Hash, Hasher}
+    error::Error,
+    fmt::Debug,
+    hash::{DefaultHasher, Hash, Hasher},
 };
 
 use arrow::{
@@ -89,10 +91,8 @@ impl BloomFilter {
                 for i in 0..col.len() {
                     if col.is_valid(i) {
                         let val = col.value(i) as i64;
-                        println!("Inserting Int32 into Bloom Filter: {}", &val);
+                        // println!("Inserting Int32 into Bloom Filter: {}", &val);
                         self.insert(&val);
-                        let result = self.contains(&val);
-                        println!("Result would be: contains: {}", result);
                     }
                 }
             }
@@ -104,10 +104,8 @@ impl BloomFilter {
                 for i in 0..col.len() {
                     if col.is_valid(i) {
                         let val = col.value(i);
-                        println!("Inserting Int64 into Bloom Filter: {}", &val);
+                        // println!("Inserting Int64 into Bloom Filter: {}", &val);
                         self.insert(&val);
-                        let result = self.contains(&val);
-                        println!("Result would be: contains: {}", result);
                     }
                 }
             }
@@ -231,7 +229,7 @@ impl BloomFilter {
                 for i in 0..col.len() {
                     if col.is_valid(i) {
                         let val = col.value(i);
-                        println!("Inserting Date64 into Bloom Filter: {}", &val);
+                        // println!("Inserting Date64 into Bloom Filter: {}", &val);
                         self.insert(&val);
                     }
                 }
@@ -312,6 +310,4 @@ impl BloomFilter {
         };
         Ok(())
     }
-
-   
 }
