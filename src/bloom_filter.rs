@@ -13,6 +13,11 @@ use arrow::{
     datatypes::{ArrowNativeType, DataType},
 };
 
+use crate::ROWS_PER_GROUP;
+
+const NUM_HASHES_DEFAULT: usize = 3;
+const BIT_ARRAY_LENGTH_DEFAULT: usize = ROWS_PER_GROUP * NUM_HASHES_DEFAULT;
+
 pub struct BloomFilter {
     pub bit_array: Vec<bool>,
     size: usize,
@@ -20,15 +25,15 @@ pub struct BloomFilter {
 }
 
 impl BloomFilter {
-    pub fn new(size: usize, num_hashes: usize) -> Self {
+    pub fn default() -> Self {
         BloomFilter {
-            bit_array: vec![false; size],
-            size,
-            num_hashes,
+            bit_array: vec![false; BIT_ARRAY_LENGTH_DEFAULT],
+            size: BIT_ARRAY_LENGTH_DEFAULT,
+            num_hashes: NUM_HASHES_DEFAULT,
         }
     }
 
-    pub fn insert<T: Hash + Debug>(&mut self, item: &T) {
+    pub fn insert<T: Hash>(&mut self, item: &T) {
         for index in self.hash(item) {
             self.bit_array[index] = true;
         }
@@ -38,7 +43,7 @@ impl BloomFilter {
         self.hash(item).iter().all(|&index| self.bit_array[index])
     }
 
-    fn hash<T: Hash + Debug>(&self, item: &T) -> Vec<usize> {
+    fn hash<T: Hash>(&self, item: &T) -> Vec<usize> {
         let mut indices = Vec::with_capacity(self.num_hashes);
         let mut hasher = DefaultHasher::new();
 
@@ -48,11 +53,6 @@ impl BloomFilter {
             let hash_value = hasher.finish();
             indices.push((hash_value as usize) % self.size);
             hasher = DefaultHasher::new();
-        }
-        let debug_repres = format!("{:?}", item);
-        if debug_repres == "false" || debug_repres == "true" {
-            // println!("Hasing: {:?}", item);
-            // println!("Indices: {:?}", indices);
         }
         indices
     }
@@ -91,7 +91,6 @@ impl BloomFilter {
                 for i in 0..col.len() {
                     if col.is_valid(i) {
                         let val = col.value(i) as i64;
-                        // println!("Inserting Int32 into Bloom Filter: {}", &val);
                         self.insert(&val);
                     }
                 }
@@ -104,7 +103,6 @@ impl BloomFilter {
                 for i in 0..col.len() {
                     if col.is_valid(i) {
                         let val = col.value(i);
-                        // println!("Inserting Int64 into Bloom Filter: {}", &val);
                         self.insert(&val);
                     }
                 }
@@ -229,7 +227,6 @@ impl BloomFilter {
                 for i in 0..col.len() {
                     if col.is_valid(i) {
                         let val = col.value(i);
-                        // println!("Inserting Date64 into Bloom Filter: {}", &val);
                         self.insert(&val);
                     }
                 }

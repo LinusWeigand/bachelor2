@@ -20,10 +20,11 @@ const OUTPUT_FILE_PATH: &str = "testing_output.parquet";
 
 pub mod bloom_filter;
 pub mod more_row_groups;
-mod parse;
+pub mod parse;
 pub mod query;
 pub mod row_filter;
 pub mod utils;
+pub mod row_group_filter;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -100,7 +101,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut file = File::open(&file_path).await?;
     let metadata = ArrowReaderMetadata::load_async(&mut file, Default::default()).await?;
     let file_metadata = metadata.metadata().file_metadata();
-    let column_maps = query::get_column_maps(&file_metadata);
+    let column_maps = utils::get_column_maps(&file_metadata);
 
     let metadata_entry = MetadataEntry {
         file_path,
@@ -110,7 +111,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // Query
 
-    let input = &format!("Float == {}.", f32::MAX);
+    let input = &format!("Float < {}.", f32::MAX);
     // let input = &format!("Float > -10.");
     // let input = "";
 

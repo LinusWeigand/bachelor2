@@ -9,6 +9,7 @@ pub mod parse;
 pub mod query;
 pub mod row_filter;
 pub mod utils;
+pub mod row_group_filter;
 
 const INPUT_FILE_NAME: &str = "output.parquet";
 const COLUMN_NAME: &str = "memoryUsed";
@@ -40,7 +41,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut file = File::open(&file_path).await?;
     let metadata = ArrowReaderMetadata::load_async(&mut file, Default::default()).await?;
     let file_metadata = metadata.metadata().file_metadata();
-    let column_maps = query::get_column_maps(&file_metadata);
+    let column_maps = utils::get_column_maps(&file_metadata);
 
     let metadata_entry = MetadataEntry {
         file_path,
@@ -62,7 +63,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             let mut file = File::open(&file_path).await?;
             let metadata = ArrowReaderMetadata::load_async(&mut file, Default::default()).await?;
             let file_metadata = metadata.metadata().file_metadata();
-            let column_maps = query::get_column_maps(&file_metadata);
+            let column_maps = utils::get_column_maps(&file_metadata);
             //TODO: Insert into cache
             &MetadataEntry {
                 file_path,

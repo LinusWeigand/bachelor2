@@ -1,21 +1,18 @@
 use std::{error::Error, pin::Pin};
 
 use arrow::array::RecordBatch;
-use futures::StreamExt;
 use parquet::{
     arrow::{
-        async_reader::ParquetRecordBatchStream, AsyncArrowWriter, ParquetRecordBatchStreamBuilder,
+        AsyncArrowWriter, ParquetRecordBatchStreamBuilder,
     },
     basic::Compression,
     file::properties::{EnabledStatistics, WriterProperties},
 };
 use tokio::fs::File;
 
-use crate::{bloom_filter::BloomFilter, ROWS_PER_GROUP};
+use crate::{bloom_filter::BloomFilter, utils, ROWS_PER_GROUP};
 
-
-// increase row groups
-// add bloom filter
+// increase row groups & add bloom filters
 pub async fn prepare_file(
     input_file: File,
     output_file: File,
@@ -30,7 +27,7 @@ pub async fn prepare_file(
     let mut stream = builder.build()?;
     let mut pinned_stream = Pin::new(&mut stream);
 
-    let record_batch = get_next_item_from_reader(&mut pinned_stream).await;
+    let record_batch = utils::get_next_item_from_reader(&mut pinned_stream).await;
 
     if record_batch.is_none() {
         return Err("File is empty".into());
@@ -51,7 +48,7 @@ pub async fn prepare_file(
     writer.write(&record_batch).await?;
     writer.flush().await?;
 
-    while let Some(record_batch) = get_next_item_from_reader(&mut pinned_stream).await {
+    while let Some(record_batch) = utils::get_next_item_from_reader(&mut pinned_stream).await {
         let row_group_bloom_filters = get_bloom_filters_from_batch(&record_batch);
         bloom_filters.push(row_group_bloom_filters);
 
@@ -68,34 +65,13 @@ fn get_bloom_filters_from_batch(batch: &RecordBatch) -> Vec<Option<BloomFilter>>
     let num_cols = batch.num_columns();
 
     for column_index in 0..num_cols {
-        // println!("Populating Bloom Filter Column: {}", column_index);
         let column = batch.column(column_index);
-
-        let mut bloom_filter = BloomFilter::new(10000, 3);
+        let mut bloom_filter = BloomFilter::default();
         let entry = match bloom_filter.populate_from_column(column) {
             Ok(_) => Some(bloom_filter),
             Err(_) => None,
         };
-        if let Some(_filter) = &entry {
-            // println!("Insert Bloom Filter with bit array: {:?}", filter.bit_array);
-        } else {
-            println!("Couldn't get a bloom filter for column: {}", column_index);
-        }
-
         result.push(entry);
     }
     result
-}
-
-async fn get_next_item_from_reader(
-    pinned_stream: &mut Pin<&mut ParquetRecordBatchStream<File>>,
-) -> Option<RecordBatch> {
-    match &pinned_stream.as_mut().next().await {
-        Some(Ok(record_batch)) => Some(record_batch.clone()),
-        Some(Err(e)) => {
-            eprintln!("Error: {:?}", e);
-            None
-        }
-        None => None,
-    }
 }

@@ -1,7 +1,8 @@
 use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
 
-use crate::query::{Comparison, Condition, Expression, ThresholdValue};
 use std::{error::Error, i64};
+
+use crate::utils::{Comparison, Condition, Expression, ThresholdValue};
 
 pub fn parse_expression(input: &str) -> Result<Expression, Box<dyn Error>> {
     let tokens = tokenize(input)?;

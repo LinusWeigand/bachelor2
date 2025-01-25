@@ -6,9 +6,10 @@ use arrow::{
     datatypes::DataType,
     error::ArrowError,
 };
-use std::collections::HashMap;
+use std::{collections::HashMap};
 
-use crate::{query::{Comparison, Condition, Expression, ThresholdValue}, utils::Float};
+use crate::utils::{Comparison, Condition, Expression, Float, ThresholdValue};
+
 
 pub fn predicate_function(
     expression: Expression,
