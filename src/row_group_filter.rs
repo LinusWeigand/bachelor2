@@ -4,16 +4,14 @@ use parquet::file::metadata::RowGroupMetaData;
 
 use crate::{
     bloom_filter::BloomFilter,
-    utils::{self, ColumnMaps, Comparison, Expression, ThresholdValue},
+    utils::{self, Comparison, Expression, ThresholdValue},
 };
 
 pub fn keep_row_group(
     row_group: &RowGroupMetaData,
     bloom_filters: &Vec<Option<BloomFilter>>,
-    row_group_index: usize,
     expression: &Expression,
     not: bool,
-    column_maps: &ColumnMaps,
 ) -> Result<bool, Box<dyn Error>> {
     match expression {
         Expression::Condition(condition) => {
@@ -65,84 +63,25 @@ pub fn keep_row_group(
         }
         Expression::And(left, right) => Ok(match not {
             true => {
-                keep_row_group(
-                    row_group,
-                    bloom_filters,
-                    row_group_index,
-                    left,
-                    true,
-                    column_maps,
-                )? || keep_row_group(
-                    row_group,
-                    bloom_filters,
-                    row_group_index,
-                    right,
-                    true,
-                    column_maps,
-                )?
+                keep_row_group(row_group, bloom_filters, left, true)?
+                    || keep_row_group(row_group, bloom_filters, right, true)?
             }
             false => {
-                keep_row_group(
-                    row_group,
-                    bloom_filters,
-                    row_group_index,
-                    left,
-                    false,
-                    column_maps,
-                )? && keep_row_group(
-                    row_group,
-                    bloom_filters,
-                    row_group_index,
-                    right,
-                    false,
-                    column_maps,
-                )?
+                keep_row_group(row_group, bloom_filters, left, false)?
+                    && keep_row_group(row_group, bloom_filters, right, false)?
             }
         }),
         Expression::Or(left, right) => Ok(match not {
             true => {
-                keep_row_group(
-                    row_group,
-                    bloom_filters,
-                    row_group_index,
-                    left,
-                    true,
-                    column_maps,
-                )? && keep_row_group(
-                    row_group,
-                    bloom_filters,
-                    row_group_index,
-                    right,
-                    true,
-                    column_maps,
-                )?
+                keep_row_group(row_group, bloom_filters, left, true)?
+                    && keep_row_group(row_group, bloom_filters, right, true)?
             }
             false => {
-                keep_row_group(
-                    row_group,
-                    bloom_filters,
-                    row_group_index,
-                    left,
-                    false,
-                    column_maps,
-                )? || keep_row_group(
-                    row_group,
-                    bloom_filters,
-                    row_group_index,
-                    right,
-                    false,
-                    column_maps,
-                )?
+                keep_row_group(row_group, bloom_filters, left, false)?
+                    || keep_row_group(row_group, bloom_filters, right, false)?
             }
         }),
-        Expression::Not(inner) => Ok(keep_row_group(
-            row_group,
-            bloom_filters,
-            row_group_index,
-            inner,
-            !not,
-            column_maps,
-        )?),
+        Expression::Not(inner) => Ok(keep_row_group(row_group, bloom_filters, inner, !not)?),
     }
 }
 pub fn compare<T: Ord>(min: T, max: T, v: T, comparison: &Comparison, not: bool) -> bool {

@@ -40,13 +40,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let file_path = PathBuf::from(INPUT_FILE_NAME);
     let mut file = File::open(&file_path).await?;
     let metadata = ArrowReaderMetadata::load_async(&mut file, Default::default()).await?;
-    let file_metadata = metadata.metadata().file_metadata();
-    let column_maps = utils::get_column_maps(&file_metadata);
 
     let metadata_entry = MetadataEntry {
         file_path,
         metadata,
-        column_maps,
+        bloom_filters: bloom_filters.clone(),
     };
 
     cached_metadata.push(metadata_entry);
@@ -62,13 +60,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
         None => {
             let mut file = File::open(&file_path).await?;
             let metadata = ArrowReaderMetadata::load_async(&mut file, Default::default()).await?;
-            let file_metadata = metadata.metadata().file_metadata();
-            let column_maps = utils::get_column_maps(&file_metadata);
             //TODO: Insert into cache
             &MetadataEntry {
                 file_path,
                 metadata,
-                column_maps,
+                bloom_filters,
             }
         }
     };
@@ -85,7 +81,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let result = query::smart_query_parquet(
         &metadata_entry,
-        bloom_filters,
         Some(expression),
         Some(select_columns),
     )

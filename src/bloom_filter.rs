@@ -18,6 +18,7 @@ use crate::ROWS_PER_GROUP;
 const NUM_HASHES_DEFAULT: usize = 3;
 const BIT_ARRAY_LENGTH_DEFAULT: usize = ROWS_PER_GROUP * NUM_HASHES_DEFAULT;
 
+#[derive(Clone)]
 pub struct BloomFilter {
     pub bit_array: Vec<bool>,
     size: usize,

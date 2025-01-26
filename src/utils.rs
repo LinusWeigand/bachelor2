@@ -164,9 +164,8 @@ pub fn get_column_projection_from_expression(expression: &Expression) -> Vec<Str
 }
 
 
-pub fn get_column_maps(metadata: &FileMetaData) -> ColumnMaps {
-    let mut index_to_name: HashMap<usize, String> = HashMap::new();
-    let name_to_index = metadata
+pub fn get_column_name_to_index(metadata: &FileMetaData) -> HashMap<String, usize> {
+    metadata
         .schema_descr()
         .columns()
         .iter()
@@ -178,12 +177,7 @@ pub fn get_column_maps(metadata: &FileMetaData) -> ColumnMaps {
                 .trim()
                 .trim_matches('"')
                 .to_string();
-            index_to_name.insert(i, column_name.clone());
             (column_name, i)
         })
-        .collect();
-    ColumnMaps {
-        index_to_name,
-        name_to_index,
-    }
+        .collect()
 }

@@ -9,18 +9,17 @@ use parquet::{
 };
 use tokio::fs::File;
 
-use crate::{bloom_filter::BloomFilter, row_filter, row_group_filter::keep_row_group, utils::{self, ColumnMaps, Expression}};
+use crate::{bloom_filter::BloomFilter, row_filter, row_group_filter::keep_row_group, utils::{self, Expression}};
 
 
 pub struct MetadataEntry {
     pub file_path: PathBuf,
     pub metadata: ArrowReaderMetadata,
-    pub column_maps: ColumnMaps,
+    pub bloom_filters: Vec<Vec<Option<BloomFilter>>>,
 }
 
 pub async fn smart_query_parquet(
     metadata_entry: &MetadataEntry,
-    bloom_filters: Vec<Vec<Option<BloomFilter>>>,
     expression: Option<Expression>,
     select_columns: Option<Vec<String>>,
 ) -> Result<Vec<RecordBatch>, Box<dyn Error>> {
@@ -29,16 +28,16 @@ pub async fn smart_query_parquet(
     let metadata = metadata_entry.metadata.clone();
     let builder = ParquetRecordBatchStreamBuilder::new_with_metadata(file, metadata.clone());
     let metadata = metadata.metadata();
+    let name_to_index = utils::get_column_name_to_index(&metadata.file_metadata());
 
     let mut stream = builder;
 
     if let Some(select_columns) = select_columns {
+        
         let column_indices: Vec<usize> = select_columns
             .iter()
             .filter_map(|column| {
-                metadata_entry
-                    .column_maps
-                    .name_to_index
+                name_to_index
                     .get(column)
                     .map(|&x| x)
             })
@@ -57,11 +56,9 @@ pub async fn smart_query_parquet(
             let row_group_metadata = metadata.row_group(i);
             let is_keep = keep_row_group(
                 row_group_metadata,
-                &bloom_filters[i],
-                i,
+                &metadata_entry.bloom_filters[i],
                 &expression,
                 false,
-                &metadata_entry.column_maps,
             )?;
             if is_keep {
                 row_groups.push(i);
@@ -74,7 +71,7 @@ pub async fn smart_query_parquet(
         let filter_columns: Vec<String> = utils::get_column_projection_from_expression(&expression);
         let column_indices: Vec<usize> = filter_columns
             .iter()
-            .filter_map(|column| metadata_entry.column_maps.name_to_index.get(column).map(|&x| x))
+            .filter_map(|column| name_to_index.get(column).map(|&x| x))
             .collect();
         let projection =
             ProjectionMask::roots(metadata.file_metadata().schema_descr(), column_indices);

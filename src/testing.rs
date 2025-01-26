@@ -100,13 +100,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let file_path = PathBuf::from(OUTPUT_FILE_PATH);
     let mut file = File::open(&file_path).await?;
     let metadata = ArrowReaderMetadata::load_async(&mut file, Default::default()).await?;
-    let file_metadata = metadata.metadata().file_metadata();
-    let column_maps = utils::get_column_maps(&file_metadata);
 
     let metadata_entry = MetadataEntry {
         file_path,
         metadata,
-        column_maps,
+        bloom_filters,
     };
 
     // Query
@@ -127,7 +125,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let select_columns = None;
 
     let results =
-        query::smart_query_parquet(&metadata_entry, bloom_filters, expression, select_columns)
+        query::smart_query_parquet(&metadata_entry, expression, select_columns)
             .await?;
 
     println!("INPUT: {}", input);
