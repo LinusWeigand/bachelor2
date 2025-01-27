@@ -1,9 +1,14 @@
-use std::{collections::HashMap, error::Error, pin::Pin};
+use std::{arch::aarch64::vabdl_s8, collections::HashMap, error::Error, pin::Pin};
 
-use arrow::array::RecordBatch;
+use arrow::{array::RecordBatch, datatypes::DataType, error::ArrowError};
+use chrono::{NaiveDateTime, TimeZone, Utc};
 use futures::StreamExt;
 use parquet::{arrow::async_reader::ParquetRecordBatchStream, file::metadata::FileMetaData};
 use tokio::fs::File;
+use parquet::{
+    basic::Type as ParquetType,
+};
+use crate::aggregation::Aggregator;
 
 #[derive(Clone)]
 pub struct Condition {
@@ -180,4 +185,61 @@ pub fn get_column_name_to_index(metadata: &FileMetaData) -> HashMap<String, usiz
             (column_name, i)
         })
         .collect()
+}
+
+
+pub fn aggregate_batch(aggregators: &mut Vec<Option<Box<dyn Aggregator>>>, batch: &RecordBatch) -> Result<(), ArrowError>{
+    for aggregator in aggregators {
+        if let Some(aggregator) = aggregator {
+            aggregator.aggregate_batch(batch)?;
+        }
+    }
+    Ok(())
+}
+
+pub fn tokenize(input: &str) -> Result<Vec<String>, Box<dyn Error>> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+
+    for c in input.chars() {
+        match c {
+            '(' | ')' | ' ' => {
+                if !current.is_empty() {
+                    tokens.push(current.clone());
+                    current.clear();
+                }
+                if c != ' ' {
+                    tokens.push(c.to_string());
+                }
+            }
+            _ => current.push(c),
+        }
+    }
+
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+
+    Ok(tokens)
+}
+
+pub fn convert_parquet_type_to_arrow(parquet_type: ParquetType) -> DataType {
+    match parquet_type {
+        ParquetType::BOOLEAN => DataType::Boolean,
+        ParquetType::INT32 => DataType::Int32,
+        ParquetType::INT64 => DataType::Int64,
+        ParquetType::INT96 => DataType::Int64, 
+        ParquetType::FLOAT => DataType::Float32,
+        ParquetType::DOUBLE => DataType::Float64,
+        ParquetType::BYTE_ARRAY => DataType::Utf8,
+        ParquetType::FIXED_LEN_BYTE_ARRAY => DataType::Binary,
+    }
+}
+
+pub fn get_naive_date_time_from_timestamp(timestamp: i128) -> Option<NaiveDateTime> {
+    let secs = timestamp / 1000;
+    let nanos = ((timestamp % 1000) * 1_000_000) as u32;
+    Utc.timestamp_opt(secs as i64, nanos)
+        .single()
+        .map(|dt| dt.naive_utc())
 }

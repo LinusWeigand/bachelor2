@@ -1,4 +1,6 @@
-use parquet::arrow::arrow_reader::ArrowReaderMetadata;
+use aggregation::{Aggregation, AggregationOp};
+use arrow::datatypes::DataType;
+use parquet::{arrow::arrow_reader::ArrowReaderMetadata};
 use query::MetadataEntry;
 use std::{error::Error, path::PathBuf};
 use tokio::fs::{File, OpenOptions};
@@ -10,6 +12,7 @@ pub mod query;
 pub mod row_filter;
 pub mod utils;
 pub mod row_group_filter;
+pub mod aggregation;
 
 const INPUT_FILE_NAME: &str = "output.parquet";
 const COLUMN_NAME: &str = "memoryUsed";
@@ -75,14 +78,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
     );
     //
     let input = format!("endTime < 2018-03-03-14:23:41");
-    let expression = parse::parse_expression(&input)?;
+    let expression = parse::expression::parse_expression(&input)?;
 
     let select_columns = vec!["memoryUsed".to_owned()];
+
+    let aggregation = parse::aggregation::parse_aggregation("SUM(Age)")?;
 
     let result = query::smart_query_parquet(
         &metadata_entry,
         Some(expression),
         Some(select_columns),
+        Some(vec![aggregation]),
     )
     .await?;
 

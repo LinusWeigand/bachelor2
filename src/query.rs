@@ -9,7 +9,7 @@ use parquet::{
 };
 use tokio::fs::File;
 
-use crate::{bloom_filter::BloomFilter, row_filter, row_group_filter::keep_row_group, utils::{self, Expression}};
+use crate::{aggregation::{build_aggregator, Aggregation, AggregationOp, Aggregator}, bloom_filter::BloomFilter, row_filter, row_group_filter::keep_row_group, utils::{self, Expression}};
 
 
 pub struct MetadataEntry {
@@ -22,6 +22,7 @@ pub async fn smart_query_parquet(
     metadata_entry: &MetadataEntry,
     expression: Option<Expression>,
     select_columns: Option<Vec<String>>,
+    aggregations: Option<Vec<Aggregation>>
 ) -> Result<Vec<RecordBatch>, Box<dyn Error>> {
     let file = File::open(&metadata_entry.file_path).await?;
 
@@ -89,17 +90,45 @@ pub async fn smart_query_parquet(
     let mut pinned_stream = Pin::new(&mut stream);
 
     let record_batch = utils::get_next_item_from_reader(&mut pinned_stream).await;
-
     if record_batch.is_none() {
         return Err("File is empty".into());
     }
     let record_batch = record_batch.unwrap();
+
+
+
+    // Aggregation
+    let mut aggregators: Vec<Option<Box<dyn Aggregator>>> = Vec::new();
+    if let Some(aggregations) = aggregations {
+        for aggregation in aggregations {
+            let column_name = aggregation.column_name;
+            let aggregation_op = aggregation.aggregation_op;
+            if let Some(column_index) = name_to_index.get(&column_name) {
+                let column = record_batch.column(*column_index);
+                let data_type = column.data_type().clone();
+                aggregators.push(build_aggregator(*column_index, aggregation_op, data_type));
+            } else {
+                return Err(format!("Could not find column with name: {}", column_name).into());
+            }
+        }
+    }
+    utils::aggregate_batch(&mut aggregators, &record_batch)?;
+
     let mut result = Vec::new();
     result.push(record_batch);
 
     while let Some(record_batch) = utils::get_next_item_from_reader(&mut pinned_stream).await {
+        utils::aggregate_batch(&mut aggregators, &record_batch)?;
         result.push(record_batch);
     }
+
+    aggregators
+        .iter()
+        .filter_map(|a| a.as_ref())
+        .for_each(|aggregator| {
+            let result = aggregator.get_result();
+            println!("Result: {:?}", result)
+        });
 
     Ok(result)
 }

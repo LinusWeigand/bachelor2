@@ -16,7 +16,7 @@ use arrow::{
 use crate::ROWS_PER_GROUP;
 
 const NUM_HASHES_DEFAULT: usize = 3;
-const BIT_ARRAY_LENGTH_DEFAULT: usize = ROWS_PER_GROUP * NUM_HASHES_DEFAULT;
+const BIT_ARRAY_LENGTH_DEFAULT: usize = ROWS_PER_GROUP * NUM_HASHES_DEFAULT * 2;
 
 #[derive(Clone)]
 pub struct BloomFilter {

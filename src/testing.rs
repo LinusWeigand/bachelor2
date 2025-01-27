@@ -2,7 +2,7 @@ use core::f32;
 use std::{error::Error, path::PathBuf, sync::Arc};
 
 use arrow::{
-    array::{BooleanArray, Date64Array, Float32Array, RecordBatch, StringArray, UInt8Array},
+    array::{BooleanArray, Date64Array, Float32Array, Int8Array, RecordBatch, StringArray},
     datatypes::{DataType, Field, Schema},
     util::pretty::print_batches,
 };
@@ -25,6 +25,7 @@ pub mod query;
 pub mod row_filter;
 pub mod utils;
 pub mod row_group_filter;
+pub mod aggregation;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -47,7 +48,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let array_names = Arc::new(StringArray::from(vec![
         "Alice", "Bob", "Charlie", "Dave", "Eve", "Frank",
     ]));
-    let array_age = Arc::new(UInt8Array::from(vec![10, u8::MAX, 30, u8::MIN, 50, 0]));
+    let array_age = Arc::new(Int8Array::from(vec![10, i8::MAX, 30, i8::MIN, 50, 0]));
     let array_birthday = Arc::new(Date64Array::from(vec![
         1420074061000,
         1104541261000,
@@ -101,6 +102,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut file = File::open(&file_path).await?;
     let metadata = ArrowReaderMetadata::load_async(&mut file, Default::default()).await?;
 
+    let aggregation = parse::aggregation::parse_aggregation("AVG(Birthday)")?;
+    println!("Aggregation: {:?}", aggregation);
+
     let metadata_entry = MetadataEntry {
         file_path,
         metadata,
@@ -109,23 +113,32 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // Query
 
-    let input = &format!("Float < {}.", f32::MAX);
+    // let input = &format!("Float < {}.", f32::MAX);
     // let input = &format!("Float > -10.");
-    // let input = "";
+    let input = "Graduated == false";
+    let input = "";
+    // let input = "Age > 9";
 
     println!("INPUT: {}", input);
     let expression = if input.is_empty() {
         None
     } else {
-        Some(parse::parse_expression(input)?)
+        Some(parse::expression::parse_expression(input)?)
     };
     // println!("{:#?}", expression);
 
     // let select_columns = Some(vec!["Graduated".to_owned()]);
     let select_columns = None;
 
+    // let aggregation = Aggregation {
+    //     column_index: 0,
+    //     aggregation_op: AggregationOp::SUM,
+    //     data_type: DataType::Utf8,
+    // };
+
+
     let results =
-        query::smart_query_parquet(&metadata_entry, expression, select_columns)
+        query::smart_query_parquet(&metadata_entry, expression, select_columns, Some(vec![aggregation]))
             .await?;
 
     println!("INPUT: {}", input);
@@ -136,7 +149,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
 fn build_schema() -> Schema {
     let name = Field::new("Name", DataType::Utf8, false);
-    let age = Field::new("Age", DataType::UInt8, false);
+    let age = Field::new("Age", DataType::Int8, false);
     let birthday = Field::new("Birthday", DataType::Date64, false);
     let graduated = Field::new("Graduated", DataType::Boolean, false);
     let float = Field::new("Float", DataType::Float32, false);

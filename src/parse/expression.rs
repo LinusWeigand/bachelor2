@@ -2,39 +2,14 @@ use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
 
 use std::{error::Error, i64};
 
-use crate::utils::{Comparison, Condition, Expression, ThresholdValue};
+use crate::utils::{self, Comparison, Condition, Expression, ThresholdValue};
 
 pub fn parse_expression(input: &str) -> Result<Expression, Box<dyn Error>> {
-    let tokens = tokenize(input)?;
+    let tokens = utils::tokenize(input)?;
     let mut pos = 0;
     parse_or(&tokens, &mut pos)
 }
 
-pub fn tokenize(input: &str) -> Result<Vec<String>, Box<dyn Error>> {
-    let mut tokens = Vec::new();
-    let mut current = String::new();
-
-    for c in input.chars() {
-        match c {
-            '(' | ')' | ' ' => {
-                if !current.is_empty() {
-                    tokens.push(current.clone());
-                    current.clear();
-                }
-                if c != ' ' {
-                    tokens.push(c.to_string());
-                }
-            }
-            _ => current.push(c),
-        }
-    }
-
-    if !current.is_empty() {
-        tokens.push(current);
-    }
-
-    Ok(tokens)
-}
 
 pub fn parse_or(tokens: &[String], pos: &mut usize) -> Result<Expression, Box<dyn Error>> {
     let mut expr = parse_and(tokens, pos)?;
