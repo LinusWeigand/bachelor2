@@ -102,7 +102,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut file = File::open(&file_path).await?;
     let metadata = ArrowReaderMetadata::load_async(&mut file, Default::default()).await?;
 
-    let aggregation = parse::aggregation::parse_aggregation("AVG(Birthday)")?;
+    let aggregation = parse::aggregation::parse_aggregation("SUM(Graduated)")?;
     println!("Aggregation: {:?}", aggregation);
 
     let metadata_entry = MetadataEntry {
