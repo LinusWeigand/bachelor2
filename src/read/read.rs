@@ -41,7 +41,7 @@ async fn main() -> std::io::Result<()> {
                     eprintln!("Error: -p/--path requires an argument.");
                     exit(1);
                 }
-            },
+            }
             "-s" | "--size" => {
                 if let Some(v) = iter.next() {
                     read_size = v.parse().unwrap();
@@ -50,17 +50,20 @@ async fn main() -> std::io::Result<()> {
                     eprintln!("Error: -s/--size requires an argument.");
                     exit(1);
                 }
-            },
+            }
             _ => {
                 eprintln!("Unknown argument: {}", arg);
                 exit(1);
             }
         }
     }
-    let file_paths: Vec<String> = FILE_PATHS.iter().map(|b| {
-        let file_path = format!("{}/{}", folder, b);
-        file_path
-    }).collect();
+    let file_paths: Vec<String> = FILE_PATHS
+        .iter()
+        .map(|b| {
+            let file_path = format!("{}/{}", folder, b);
+            file_path
+        })
+        .collect();
 
     let total_bytes_read = Arc::new(AtomicU64::new(0));
     println!("Starting Benchmark...");

@@ -1,14 +1,12 @@
-use arrow::array::RecordBatch;
-use arrow2::datatypes::Schema;
-use arrow2::io::parquet::read::{infer_schema, read_metadata_async, FileReader};
-use futures::stream::{StreamExt, TryStreamExt};
-use parquet::arrow::async_reader::ParquetRecordBatchStream;
-use tokio::io::BufReader;
-use tokio_util::compat::TokioAsyncReadCompatExt;
 use std::env;
 use std::error::Error;
 use std::pin::Pin;
 use std::process::exit;
+use arrow::array::RecordBatch;
+use futures::stream::{StreamExt, TryStreamExt};
+use parquet::arrow::arrow_reader::ArrowReaderMetadata;
+use parquet::arrow::async_reader::ParquetRecordBatchStream;
+use parquet::arrow::ParquetRecordBatchStreamBuilder;
 use tokio::fs::File;
 use tokio::time::Instant;
 
@@ -31,7 +29,7 @@ const FILE_PATHS: [&str; 8] = [
     // "merged_16.parquet",
 ];
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
+async fn main() -> Result<(), Box<dyn Error>>{
     let args: Vec<String> = env::args().collect();
     let mut iter = args.iter().skip(1);
 
@@ -70,22 +68,24 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut tasks = Vec::new();
     for (path, metadata) in file_paths {
         let task = tokio::spawn(async move {
-            let schema: Schema = infer_schema(&metadata)?;
-            let file = std::fs::File::open(&path)?;
-            let reader = FileReader::new(
-                file,
-                metadata.row_groups,
-                schema,
-                Some(read_size),
-                None,
-                None,
-            );
+            let file = File::open(&path).await?;
 
-            for maybe_batch in reader {
-                let batch = maybe_batch?;
+            let mut builder = ParquetRecordBatchStreamBuilder::new_with_metadata(file, metadata);
+            builder = builder.with_batch_size(read_size);
+            let mut stream = builder.build()?;
+            let mut pinned_stream = Pin::new(&mut stream);
+
+            let mut record_batch = get_next_item_from_reader(&mut pinned_stream)
+                .await
+                .unwrap();
+
+            while let Some(batch) = get_next_item_from_reader(&mut pinned_stream).await
+            {
+                record_batch = batch;
             }
+            
 
-            Ok::<(), Box<dyn Error + Send + Sync>>(())
+            Ok::<(), std::io::Error>(())
         });
         tasks.push(task);
     }
@@ -100,6 +100,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let tp = size / seconds;
     println!("Time: {}", seconds);
     println!("Throughput: {}", tp);
+
 
     Ok(())
 }
@@ -117,17 +118,15 @@ async fn get_next_item_from_reader(
     }
 }
 
-async fn load_files(
-    folder: &str,
-) -> Result<Vec<(String, arrow2::io::parquet::read::FileMetaData)>, Box<dyn Error + Send + Sync>> {
+
+async fn load_files(folder: &str) -> Result<Vec<(String, ArrowReaderMetadata)>, Box<dyn std::error::Error>> {
     let file_paths = futures::stream::iter(FILE_PATHS.iter().map(|b| {
         let folder = folder.to_string();
         async move {
             let file_path = format!("{}/{}", folder, b);
-            let file = File::open(&file_path).await?;
-            let mut buf_reader = BufReader::new(file).compat();
-            let metadata = read_metadata_async(&mut buf_reader).await?;
-            Ok::<_, Box<dyn Error + Send + Sync>>((file_path, metadata))
+            let mut file = File::open(&file_path).await?;
+            let metadata = ArrowReaderMetadata::load_async(&mut file, Default::default()).await?;
+            Ok::<_, Box<dyn std::error::Error>>((file_path, metadata))
         }
     }))
     .buffer_unordered(10)
