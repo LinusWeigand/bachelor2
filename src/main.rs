@@ -1,18 +1,34 @@
 use aggregation::{Aggregation, AggregationOp};
 use arrow::datatypes::DataType;
-use parquet::{arrow::arrow_reader::ArrowReaderMetadata};
+use parquet::arrow::arrow_reader::ArrowReaderMetadata;
 use query::MetadataEntry;
 use std::{error::Error, path::PathBuf};
 use tokio::fs::{File, OpenOptions};
 
+pub mod aggregation;
 mod bloom_filter;
 mod more_row_groups;
 pub mod parse;
 pub mod query;
 pub mod row_filter;
-pub mod utils;
 pub mod row_group_filter;
-pub mod aggregation;
+pub mod utils;
+
+#[derive(PartialEq)]
+pub enum Mode {
+    Base,
+    Group,
+    Bloom,
+    Row,
+    Column,
+    Aggr,
+}
+
+#[derive(PartialEq)]
+pub enum Workload {
+    BestCase,
+    WorstCase,
+}
 
 const INPUT_FILE_NAME: &str = "output.parquet";
 const COLUMN_NAME: &str = "memoryUsed";
@@ -22,7 +38,7 @@ const OUTPUT_FILE: &str = "output.parquet";
 const ROWS_PER_GROUP: usize = 1024;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
+async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     // Increase Row Groups
     let input_file = File::open(INPUT_FILE).await?;
 
@@ -84,14 +100,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let aggregation = parse::aggregation::parse_aggregation("SUM(Age)")?;
 
-    let result = query::smart_query_parquet(
-        &metadata_entry,
-        Some(expression),
-        Some(select_columns),
-        Some(vec![aggregation]),
-    )
-    .await?;
-
-    println!("Result: {:#?}", result);
+    // let result = query::smart_query_parquet(
+    //     &metadata_entry,
+    //     Some(expression),
+    //     Some(select_columns),
+    //     Some(vec![aggregation]),
+    //     Mode::Aggr,
+    // )
+    // .await?;
+    //
+    // println!("Result: {:#?}", result);
     Ok(())
 }

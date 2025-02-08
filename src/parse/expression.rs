@@ -4,14 +4,16 @@ use std::{error::Error, i64};
 
 use crate::utils::{self, Comparison, Condition, Expression, ThresholdValue};
 
-pub fn parse_expression(input: &str) -> Result<Expression, Box<dyn Error>> {
+pub fn parse_expression(input: &str) -> Result<Expression, Box<dyn Error + Send + Sync>> {
     let tokens = utils::tokenize(input)?;
     let mut pos = 0;
     parse_or(&tokens, &mut pos)
 }
 
-
-pub fn parse_or(tokens: &[String], pos: &mut usize) -> Result<Expression, Box<dyn Error>> {
+pub fn parse_or(
+    tokens: &[String],
+    pos: &mut usize,
+) -> Result<Expression, Box<dyn Error + Send + Sync>> {
     let mut expr = parse_and(tokens, pos)?;
 
     while *pos < tokens.len() && tokens[*pos] == "OR" {
@@ -23,7 +25,10 @@ pub fn parse_or(tokens: &[String], pos: &mut usize) -> Result<Expression, Box<dy
     Ok(expr)
 }
 
-pub fn parse_and(tokens: &[String], pos: &mut usize) -> Result<Expression, Box<dyn Error>> {
+pub fn parse_and(
+    tokens: &[String],
+    pos: &mut usize,
+) -> Result<Expression, Box<dyn Error + Send + Sync>> {
     let mut expr = parse_not(tokens, pos)?;
 
     while *pos < tokens.len() && tokens[*pos] == "AND" {
@@ -35,7 +40,10 @@ pub fn parse_and(tokens: &[String], pos: &mut usize) -> Result<Expression, Box<d
     Ok(expr)
 }
 
-pub fn parse_not(tokens: &[String], pos: &mut usize) -> Result<Expression, Box<dyn Error>> {
+pub fn parse_not(
+    tokens: &[String],
+    pos: &mut usize,
+) -> Result<Expression, Box<dyn Error + Send + Sync>> {
     if *pos < tokens.len() && tokens[*pos] == "NOT" {
         *pos += 1;
         let expr = parse_primary(tokens, pos)?;
@@ -45,7 +53,10 @@ pub fn parse_not(tokens: &[String], pos: &mut usize) -> Result<Expression, Box<d
     parse_primary(tokens, pos)
 }
 
-pub fn parse_primary(tokens: &[String], pos: &mut usize) -> Result<Expression, Box<dyn Error>> {
+pub fn parse_primary(
+    tokens: &[String],
+    pos: &mut usize,
+) -> Result<Expression, Box<dyn Error + Send + Sync>> {
     if *pos >= tokens.len() {
         return Err("Unexpected end of input".into());
     }

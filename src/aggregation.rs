@@ -1,5 +1,5 @@
 use core::f64;
-use std::{cmp::{max, min}, i128, marker::PhantomData};
+use std::{cmp::{max, min}, fmt::Display, i128, marker::PhantomData};
 
 use arrow::{array::{Array, ArrowPrimitiveType, PrimitiveArray, RecordBatch}, datatypes::{DataType, Date32Type, Date64Type, Float16Type, Float32Type, Float64Type, Int16Type, Int32Type, Int64Type, Int8Type, UInt16Type, UInt32Type, UInt64Type, UInt8Type}, error::ArrowError};
 use chrono::NaiveDateTime;
@@ -20,6 +20,7 @@ pub enum ScalarValue {
 pub trait Aggregator: Send + Sync {
     fn aggregate_batch(&mut self, batch: &RecordBatch) -> Result<(), ArrowError>;
     fn get_result(&self) -> ScalarValue;
+    fn get_name(&self) -> String;
 }
 
 #[derive(PartialEq, Clone, Debug)]
@@ -34,13 +35,26 @@ pub enum AggregationOp {
 #[derive(Debug)]
 pub struct Aggregation {
     pub column_name: String,
-    pub aggregation_op: AggregationOp
+    pub aggregation_op: AggregationOp,
+}
+
+impl Display for AggregationOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", match self {
+            AggregationOp::SUM => "SUM",
+            AggregationOp::AVG => "AVG",
+            AggregationOp::COUNT => "COUNT",
+            AggregationOp::MIN => "MIN",
+            AggregationOp::MAX => "MAX",
+        })
+    }
 }
 
 
 
 pub fn build_aggregator(
     column_index: usize,
+    column_name: String,
     aggregation_op: AggregationOp,
     data_type: DataType,
 ) -> Option<Box<dyn Aggregator>> {
@@ -48,43 +62,43 @@ pub fn build_aggregator(
     let aggregation_op = aggregation_op.clone();
     match data_type {
         DataType::Int8 => Some(Box::new(IntegerAggregator::<Int8Type>::new(
-            column_index, aggregation_op,
+            column_index, column_name, aggregation_op,
         ))),
         DataType::Int16 => Some(Box::new(IntegerAggregator::<Int16Type>::new(
-            column_index, aggregation_op,
+            column_index, column_name, aggregation_op,
         ))),
         DataType::Int32 => Some(Box::new(IntegerAggregator::<Int32Type>::new(
-            column_index, aggregation_op,
+            column_index, column_name, aggregation_op,
         ))),
         DataType::Int64 => Some(Box::new(IntegerAggregator::<Int64Type>::new(
-            column_index, aggregation_op,
+            column_index, column_name, aggregation_op,
         ))),
         DataType::UInt8 => Some(Box::new(IntegerAggregator::<UInt8Type>::new(
-            column_index, aggregation_op,
+            column_index, column_name, aggregation_op,
         ))),
         DataType::UInt16 => Some(Box::new(IntegerAggregator::<UInt16Type>::new(
-            column_index, aggregation_op,
+            column_index, column_name, aggregation_op,
         ))),
         DataType::UInt32 => Some(Box::new(IntegerAggregator::<UInt32Type>::new(
-            column_index, aggregation_op,
+            column_index, column_name, aggregation_op,
         ))),
         DataType::UInt64 => Some(Box::new(IntegerAggregator::<UInt64Type>::new(
-            column_index, aggregation_op,
+            column_index, column_name, aggregation_op,
         ))),
         DataType::Date32 => Some(Box::new(IntegerAggregator::<Date32Type>::new(
-            column_index, aggregation_op,
+            column_index, column_name, aggregation_op,
         ))),
         DataType::Date64 => Some(Box::new(IntegerAggregator::<Date64Type>::new(
-            column_index, aggregation_op,
+            column_index, column_name, aggregation_op,
         ))),
         DataType::Float16 => Some(Box::new(FloatAggregator::<Float16Type>::new(
-            column_index, aggregation_op,
+            column_index, column_name, aggregation_op,
         ))),
         DataType::Float32 => Some(Box::new(FloatAggregator::<Float32Type>::new(
-            column_index, aggregation_op,
+            column_index, column_name, aggregation_op,
         ))),
         DataType::Float64 => Some(Box::new(FloatAggregator::<Float64Type>::new(
-            column_index, aggregation_op,
+            column_index, column_name, aggregation_op,
         ))),
         _ => None,
     }
@@ -93,6 +107,7 @@ pub fn build_aggregator(
 
 pub struct IntegerAggregator<T: ArrowPrimitiveType> {
     column_index: usize,
+    column_name: String,
     aggregation_op: AggregationOp,
     sum: i128,
     count: usize,
@@ -109,9 +124,10 @@ where
     T::Native: Into<i128>,
 {
 
-    pub fn new(column_index: usize, aggregation_op: AggregationOp) -> Self {
+    pub fn new(column_index: usize, column_name: String, aggregation_op: AggregationOp) -> Self {
         Self {
             column_index,
+            column_name,
             aggregation_op,
             sum: 0,
             count: 0,
@@ -197,6 +213,9 @@ where
             },
         }
     }
+    fn get_name(&self) -> String {
+        format!("{}({})", self.aggregation_op.to_string(), self.column_name)
+    }
 }
 
 pub fn return_date_else_int(value: i128) -> ScalarValue {
@@ -210,6 +229,7 @@ pub fn return_date_else_int(value: i128) -> ScalarValue {
 
 pub struct FloatAggregator<T: ArrowPrimitiveType> {
     column_index: usize,
+    column_name: String,
     aggregation_op: AggregationOp,
     sum: f64,
     count: usize,
@@ -224,9 +244,10 @@ where
     T: ArrowPrimitiveType,
     T::Native: Into<f64>
 {
-    pub fn new(column_index: usize, aggregation_op: AggregationOp) -> Self {
+    pub fn new(column_index: usize, column_name: String, aggregation_op: AggregationOp) -> Self {
         Self {
             column_index,
+            column_name,
             aggregation_op,
             sum: 0.,
             count: 0,
@@ -298,10 +319,15 @@ where
             AggregationOp::MAX => ScalarValue::Float64(self.max),
         }
     }
+
+    fn get_name(&self) -> String {
+        format!("{}({})", self.aggregation_op.to_string(), self.column_name)
+    }
 }
 
 pub struct BooleanAggregator<T: ArrowPrimitiveType> {
     column_index: usize,
+    column_name: String,
     aggregation_op: AggregationOp,
     sum: usize,
     count: usize,
@@ -317,9 +343,10 @@ where
     T::Native: Into<bool>,
 {
 
-    pub fn new(column_index: usize, aggregation_op: AggregationOp) -> Self {
+    pub fn new(column_index: usize, column_name: String, aggregation_op: AggregationOp) -> Self {
         Self {
             column_index,
+            column_name,
             aggregation_op,
             sum: 0,
             count: 0,
@@ -394,10 +421,15 @@ where
             AggregationOp::MAX => ScalarValue::Boolean(self.max),
         }
     }
+
+    fn get_name(&self) -> String {
+        format!("{}({})", self.aggregation_op.to_string(), self.column_name)
+    }
 }
 
 pub struct StringAggregator<T: ArrowPrimitiveType> {
     column_index: usize,
+    column_name: String,
     aggregation_op: AggregationOp,
     sum: String,
     count: usize,
@@ -413,9 +445,10 @@ where
     T::Native: Into<String>,
 {
 
-    pub fn new(column_index: usize, aggregation_op: AggregationOp) -> Self {
+    pub fn new(column_index: usize, column_name: String, aggregation_op: AggregationOp) -> Self {
         Self {
             column_index,
+            column_name,
             aggregation_op,
             sum: "".into(),
             count: 0,
@@ -481,5 +514,9 @@ where
             AggregationOp::MIN => ScalarValue::String(self.min.clone()),
             AggregationOp::MAX => ScalarValue::String(self.max.clone()),
         }
+    }
+
+    fn get_name(&self) -> String {
+        format!("{}({})", self.aggregation_op.to_string(), self.column_name)
     }
 }

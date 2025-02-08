@@ -2,9 +2,7 @@ use std::{error::Error, pin::Pin};
 
 use arrow::array::RecordBatch;
 use parquet::{
-    arrow::{
-        AsyncArrowWriter, ParquetRecordBatchStreamBuilder,
-    },
+    arrow::{AsyncArrowWriter, ParquetRecordBatchStreamBuilder},
     basic::Compression,
     file::properties::{EnabledStatistics, WriterProperties},
 };
@@ -17,7 +15,7 @@ pub async fn prepare_file(
     input_file: File,
     output_file: File,
     rows_per_group: usize,
-) -> Result<Vec<Vec<Option<BloomFilter>>>, Box<dyn Error>> {
+) -> Result<Vec<Vec<Option<BloomFilter>>>, Box<dyn Error + Send + Sync>> {
     let mut bloom_filters = Vec::new();
 
     let builder = ParquetRecordBatchStreamBuilder::new(input_file)

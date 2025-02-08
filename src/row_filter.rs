@@ -1,21 +1,20 @@
 use arrow::{
     array::{
-        Array, BooleanArray, BooleanBuilder, Date32Array, Date64Array, Float16Array, Float32Array, Float64Array, Int16Array, Int32Array, Int64Array, Int8Array, RecordBatch, StringArray, UInt16Array, UInt32Array, UInt64Array, UInt8Array
-        
+        Array, BooleanArray, BooleanBuilder, Date32Array, Date64Array, Float16Array, Float32Array,
+        Float64Array, Int16Array, Int32Array, Int64Array, Int8Array, RecordBatch, StringArray,
+        UInt16Array, UInt32Array, UInt64Array, UInt8Array,
     },
     datatypes::DataType,
     error::ArrowError,
 };
-use std::{collections::HashMap};
+use std::collections::HashMap;
 
 use crate::utils::{Comparison, Condition, Expression, Float, ThresholdValue};
-
 
 pub fn predicate_function(
     expression: Expression,
 ) -> Box<dyn FnMut(RecordBatch) -> Result<BooleanArray, ArrowError> + Send + 'static> {
     let column_names = get_column_projection_from_expression(&expression);
-    println!("predicate function: column names: {:?}", column_names);
 
     Box::new(
         move |batch: RecordBatch| -> Result<BooleanArray, ArrowError> {
@@ -112,201 +111,258 @@ fn evaluate_condition(
                 return Ok(false);
             }
             let value = col.value(row_index) as i64;
-            cond.comparison.keep_row(&ThresholdValue::Int64(value), &cond.threshold)
+            cond.comparison
+                .keep_row(&ThresholdValue::Int64(value), &cond.threshold)
         }
         DataType::Int16 => {
-            let col = column.as_any().downcast_ref::<Int16Array>().ok_or_else(|| {
-                ArrowError::SchemaError("Failed to downcast Int16Array".to_string())
-            })?;
+            let col = column
+                .as_any()
+                .downcast_ref::<Int16Array>()
+                .ok_or_else(|| {
+                    ArrowError::SchemaError("Failed to downcast Int16Array".to_string())
+                })?;
             if col.is_null(row_index) {
                 return Ok(false);
             }
             let value = col.value(row_index) as i64;
-            cond.comparison.keep_row(&ThresholdValue::Int64(value), &cond.threshold)
+            cond.comparison
+                .keep_row(&ThresholdValue::Int64(value), &cond.threshold)
         }
         DataType::Int32 => {
-            let col = column.as_any().downcast_ref::<Int32Array>().ok_or_else(|| {
-                ArrowError::SchemaError("Failed to downcast Int32Array".to_string())
-            })?;
+            let col = column
+                .as_any()
+                .downcast_ref::<Int32Array>()
+                .ok_or_else(|| {
+                    ArrowError::SchemaError("Failed to downcast Int32Array".to_string())
+                })?;
             if col.is_null(row_index) {
                 return Ok(false);
             }
             let value = col.value(row_index) as i64;
-            cond.comparison.keep_row(&ThresholdValue::Int64(value), &cond.threshold)
+            cond.comparison
+                .keep_row(&ThresholdValue::Int64(value), &cond.threshold)
         }
         DataType::Int64 => {
-            let col = column.as_any().downcast_ref::<Int64Array>().ok_or_else(|| {
-                ArrowError::SchemaError("Failed to downcast Int64Array".to_string())
-            })?;
+            let col = column
+                .as_any()
+                .downcast_ref::<Int64Array>()
+                .ok_or_else(|| {
+                    ArrowError::SchemaError("Failed to downcast Int64Array".to_string())
+                })?;
             if col.is_null(row_index) {
                 return Ok(false);
             }
             let value = col.value(row_index);
-            cond.comparison.keep_row(&ThresholdValue::Int64(value), &cond.threshold)
+            cond.comparison
+                .keep_row(&ThresholdValue::Int64(value), &cond.threshold)
         }
         DataType::UInt8 => {
-            let col = column.as_any().downcast_ref::<UInt8Array>().ok_or_else(|| {
-                ArrowError::SchemaError("Failed to downcast UInt8Array".to_string())
-            })?;
+            let col = column
+                .as_any()
+                .downcast_ref::<UInt8Array>()
+                .ok_or_else(|| {
+                    ArrowError::SchemaError("Failed to downcast UInt8Array".to_string())
+                })?;
             if col.is_null(row_index) {
                 return Ok(false);
             }
             let value = col.value(row_index) as i64;
-            cond.comparison.keep_row(&ThresholdValue::Int64(value), &cond.threshold)
+            cond.comparison
+                .keep_row(&ThresholdValue::Int64(value), &cond.threshold)
         }
         DataType::UInt16 => {
-            let col = column.as_any().downcast_ref::<UInt16Array>().ok_or_else(|| {
-                ArrowError::SchemaError("Failed to downcast UInt16Array".to_string())
-            })?;
+            let col = column
+                .as_any()
+                .downcast_ref::<UInt16Array>()
+                .ok_or_else(|| {
+                    ArrowError::SchemaError("Failed to downcast UInt16Array".to_string())
+                })?;
             if col.is_null(row_index) {
                 return Ok(false);
             }
             let value = col.value(row_index) as i64;
-            cond.comparison.keep_row(&ThresholdValue::Int64(value), &cond.threshold)
+            cond.comparison
+                .keep_row(&ThresholdValue::Int64(value), &cond.threshold)
         }
         DataType::UInt32 => {
-            let col = column.as_any().downcast_ref::<UInt32Array>().ok_or_else(|| {
-                ArrowError::SchemaError("Failed to downcast UInt32Array".to_string())
-            })?;
+            let col = column
+                .as_any()
+                .downcast_ref::<UInt32Array>()
+                .ok_or_else(|| {
+                    ArrowError::SchemaError("Failed to downcast UInt32Array".to_string())
+                })?;
             if col.is_null(row_index) {
                 return Ok(false);
             }
             let value = col.value(row_index) as i64;
-            cond.comparison.keep_row(&ThresholdValue::Int64(value), &cond.threshold)
+            cond.comparison
+                .keep_row(&ThresholdValue::Int64(value), &cond.threshold)
         }
         DataType::UInt64 => {
-            let col = column.as_any().downcast_ref::<UInt64Array>().ok_or_else(|| {
-                ArrowError::SchemaError("Failed to downcast UInt64Array".to_string())
-            })?;
+            let col = column
+                .as_any()
+                .downcast_ref::<UInt64Array>()
+                .ok_or_else(|| {
+                    ArrowError::SchemaError("Failed to downcast UInt64Array".to_string())
+                })?;
             if col.is_null(row_index) {
                 return Ok(false);
             }
             let value = col.value(row_index) as i64;
-            cond.comparison.keep_row(&ThresholdValue::Int64(value), &cond.threshold)
+            cond.comparison
+                .keep_row(&ThresholdValue::Int64(value), &cond.threshold)
         }
         DataType::Float16 => {
-            let col = column.as_any().downcast_ref::<Float16Array>().ok_or_else(|| {
-                ArrowError::SchemaError("Failed to downcast Float16Array".to_string())
-            })?;
+            let col = column
+                .as_any()
+                .downcast_ref::<Float16Array>()
+                .ok_or_else(|| {
+                    ArrowError::SchemaError("Failed to downcast Float16Array".to_string())
+                })?;
             if col.is_null(row_index) {
                 return Ok(false);
             }
             let value = col.value(row_index).to_f64();
-            cond.comparison.keep_row(&ThresholdValue::Float64(value), &cond.threshold)
+            cond.comparison
+                .keep_row(&ThresholdValue::Float64(value), &cond.threshold)
         }
         DataType::Float32 => {
-            let col = column.as_any().downcast_ref::<Float32Array>().ok_or_else(|| {
-                ArrowError::SchemaError("Failed to downcast Float32Array".to_string())
-            })?;
+            let col = column
+                .as_any()
+                .downcast_ref::<Float32Array>()
+                .ok_or_else(|| {
+                    ArrowError::SchemaError("Failed to downcast Float32Array".to_string())
+                })?;
             if col.is_null(row_index) {
                 return Ok(false);
             }
             let value = col.value(row_index) as f64;
-            cond.comparison.keep_row(&ThresholdValue::Float64(value), &cond.threshold)
+            cond.comparison
+                .keep_row(&ThresholdValue::Float64(value), &cond.threshold)
         }
         DataType::Float64 => {
-            let col = column.as_any().downcast_ref::<Float64Array>().ok_or_else(|| {
-                ArrowError::SchemaError("Failed to downcast Float64Array".to_string())
-            })?;
+            let col = column
+                .as_any()
+                .downcast_ref::<Float64Array>()
+                .ok_or_else(|| {
+                    ArrowError::SchemaError("Failed to downcast Float64Array".to_string())
+                })?;
             if col.is_null(row_index) {
                 return Ok(false);
             }
             let value = col.value(row_index);
-            cond.comparison.keep_row(&ThresholdValue::Float64(value), &cond.threshold)
+            cond.comparison
+                .keep_row(&ThresholdValue::Float64(value), &cond.threshold)
         }
         DataType::Date32 => {
-            let col = column.as_any().downcast_ref::<Date32Array>().ok_or_else(|| {
-                ArrowError::SchemaError("Failed to downcast Date32Array".to_string())
-            })?;
+            let col = column
+                .as_any()
+                .downcast_ref::<Date32Array>()
+                .ok_or_else(|| {
+                    ArrowError::SchemaError("Failed to downcast Date32Array".to_string())
+                })?;
             if col.is_null(row_index) {
                 return Ok(false);
             }
             let value = col.value(row_index) as i64;
-            cond.comparison.keep_row(&ThresholdValue::Int64(value), &cond.threshold)
+            cond.comparison
+                .keep_row(&ThresholdValue::Int64(value), &cond.threshold)
         }
         DataType::Date64 => {
-            let col = column.as_any().downcast_ref::<Date64Array>().ok_or_else(|| {
-                ArrowError::SchemaError("Failed to downcast Date64Array".to_string())
-            })?;
+            let col = column
+                .as_any()
+                .downcast_ref::<Date64Array>()
+                .ok_or_else(|| {
+                    ArrowError::SchemaError("Failed to downcast Date64Array".to_string())
+                })?;
             if col.is_null(row_index) {
                 return Ok(false);
             }
             let value = col.value(row_index) as i64;
-            cond.comparison.keep_row(&ThresholdValue::Int64(value), &cond.threshold)
+            cond.comparison
+                .keep_row(&ThresholdValue::Int64(value), &cond.threshold)
         }
         DataType::Boolean => {
-            let col = column.as_any().downcast_ref::<BooleanArray>().ok_or_else(|| {
-                ArrowError::SchemaError("Failed to downcast Date64Array".to_string())
-            })?;
+            let col = column
+                .as_any()
+                .downcast_ref::<BooleanArray>()
+                .ok_or_else(|| {
+                    ArrowError::SchemaError("Failed to downcast Date64Array".to_string())
+                })?;
             if col.is_null(row_index) {
                 return Ok(false);
             }
             let value = col.value(row_index);
-            cond.comparison.keep_row(&ThresholdValue::Boolean(value), &cond.threshold)
+            cond.comparison
+                .keep_row(&ThresholdValue::Boolean(value), &cond.threshold)
         }
         DataType::Utf8 => {
-            let col = column.as_any().downcast_ref::<StringArray>().ok_or_else(|| {
-                ArrowError::SchemaError("Failed to downcast Date64Array".to_string())
-            })?;
+            let col = column
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .ok_or_else(|| {
+                    ArrowError::SchemaError("Failed to downcast Date64Array".to_string())
+                })?;
             if col.is_null(row_index) {
                 return Ok(false);
             }
             let value = col.value(row_index).to_owned();
-            cond.comparison.keep_row(&ThresholdValue::Utf8String(value), &cond.threshold)
+            cond.comparison
+                .keep_row(&ThresholdValue::Utf8String(value), &cond.threshold)
         }
         DataType::LargeUtf8 => {
-            let col = column.as_any().downcast_ref::<StringArray>().ok_or_else(|| {
-                ArrowError::SchemaError("Failed to downcast Date64Array".to_string())
-            })?;
+            let col = column
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .ok_or_else(|| {
+                    ArrowError::SchemaError("Failed to downcast Date64Array".to_string())
+                })?;
             if col.is_null(row_index) {
                 return Ok(false);
             }
             let value = col.value(row_index).to_owned();
-            cond.comparison.keep_row(&ThresholdValue::Utf8String(value), &cond.threshold)
+            cond.comparison
+                .keep_row(&ThresholdValue::Utf8String(value), &cond.threshold)
         }
         DataType::Utf8View => {
-            let col = column.as_any().downcast_ref::<StringArray>().ok_or_else(|| {
-                ArrowError::SchemaError("Failed to downcast Date64Array".to_string())
-            })?;
+            let col = column
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .ok_or_else(|| {
+                    ArrowError::SchemaError("Failed to downcast Date64Array".to_string())
+                })?;
             if col.is_null(row_index) {
                 return Ok(false);
             }
             let value = col.value(row_index).to_owned();
-            cond.comparison.keep_row(&ThresholdValue::Utf8String(value), &cond.threshold)
+            cond.comparison
+                .keep_row(&ThresholdValue::Utf8String(value), &cond.threshold)
         }
         _ => false,
     })
 }
 
 impl Comparison {
-    pub fn keep_row(
-        &self,
-        row_value: &ThresholdValue,
-        v: &ThresholdValue,
-    ) -> bool {
+    pub fn keep_row(&self, row_value: &ThresholdValue, v: &ThresholdValue) -> bool {
         match (row_value, v) {
             (ThresholdValue::Int64(row_value), ThresholdValue::Int64(v)) => {
                 compare(row_value, v, &self)
-            },
+            }
             (ThresholdValue::Boolean(row_value), ThresholdValue::Boolean(v)) => {
                 compare(row_value, v, &self)
-            },
+            }
             (ThresholdValue::Utf8String(row_value), ThresholdValue::Utf8String(v)) => {
                 compare(row_value, v, &self)
-            },
+            }
             (ThresholdValue::Float64(row_value), ThresholdValue::Float64(v)) => {
                 compare_floats(*row_value, *v, &self)
-            },
+            }
             _ => false,
         }
     }
 }
 
-fn compare<T: Ord>(
-    row_value: T,
-    v: T,
-    comparison: &Comparison,
-) ->bool {
+fn compare<T: Ord>(row_value: T, v: T, comparison: &Comparison) -> bool {
     match comparison {
         Comparison::LessThan => row_value < v,
         Comparison::LessThanOrEqual => row_value <= v,
@@ -316,11 +372,7 @@ fn compare<T: Ord>(
     }
 }
 
-fn compare_floats<T: Float>(
-    row_value: T,
-    v: T,
-    comparison: &Comparison,
-) -> bool {
+fn compare_floats<T: Float>(row_value: T, v: T, comparison: &Comparison) -> bool {
     match comparison {
         Comparison::LessThan => row_value < v,
         Comparison::LessThanOrEqual => row_value <= v,

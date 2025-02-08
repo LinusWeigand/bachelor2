@@ -1,7 +1,10 @@
+use crate::{
+    aggregation::{Aggregation, AggregationOp},
+    utils,
+};
 use std::error::Error;
-use crate::{aggregation::{Aggregation, AggregationOp}, utils};
 
-pub fn parse_aggregation(input: &str) -> Result<Aggregation, Box<dyn Error>> {
+pub fn parse_aggregation(input: &str) -> Result<Aggregation, Box<dyn Error + Send + Sync>> {
     let tokens = utils::tokenize(input)?;
     let aggregation_op = match tokens[0].as_str() {
         "SUM" => AggregationOp::SUM,
@@ -19,7 +22,7 @@ pub fn parse_aggregation(input: &str) -> Result<Aggregation, Box<dyn Error>> {
     }
 
     let column_name = (&tokens[2]).to_owned();
-    
+
     Ok(Aggregation {
         column_name,
         aggregation_op,

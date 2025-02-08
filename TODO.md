@@ -22,3 +22,20 @@ DONE 2. row filtering
 
 #### Backlog
 Compression & Encoding & Dictionary
+
+
+# Memory Rechnung
+- Bloom Filter, min max auf bytes
+- 0.5 GB auf 1 TB an Memory verfügbar
+
+# Benchmarking
+
+- how many
+
+- Disk Bandwith ausnutzen!
+- extrem Queries: worst (expensive predicate, nix rausfiltert), best (alles rausfiltert, einfaches predicate)
+
+
+
+## Optimization
+- Metadata: Arc statt Clone

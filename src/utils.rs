@@ -1,23 +1,25 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::{collections::HashMap, error::Error, pin::Pin};
 
+use crate::aggregation::Aggregator;
 use arrow::{array::RecordBatch, datatypes::DataType, error::ArrowError};
 use chrono::{NaiveDateTime, TimeZone, Utc};
 use futures::StreamExt;
+use parquet::basic::Type as ParquetType;
 use parquet::{arrow::async_reader::ParquetRecordBatchStream, file::metadata::FileMetaData};
 use tokio::fs::File;
-use parquet::{
-    basic::Type as ParquetType,
-};
-use crate::aggregation::Aggregator;
+use tokio::io::{AsyncRead, AsyncSeek, ReadBuf};
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Condition {
     pub column_name: String,
     pub threshold: ThresholdValue,
     pub comparison: Comparison,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum ThresholdValue {
     Int64(i64),
     Float64(f64),
@@ -83,7 +85,7 @@ impl Float for f64 {
     }
 }
 
-pub fn bytes_to_value(bytes: &[u8], column_type: &str) -> Result<ThresholdValue, Box<dyn Error>> {
+pub fn bytes_to_value(bytes: &[u8], column_type: &str) -> Result<ThresholdValue, Box<dyn Error + Send + Sync>> {
     match column_type {
         "INT32" => {
             if bytes.len() != 4 {
@@ -146,6 +148,19 @@ pub async fn get_next_item_from_reader(
     }
 }
 
+pub async fn get_next_item_from_reader_and_count_bytes(
+    pinned_stream: &mut Pin<&mut ParquetRecordBatchStream<CountingReader<File>>>,
+) -> Option<RecordBatch> {
+    match &pinned_stream.as_mut().next().await {
+        Some(Ok(record_batch)) => Some(record_batch.clone()),
+        Some(Err(e)) => {
+            eprintln!("Error: {:?}", e);
+            None
+        }
+        None => None,
+    }
+}
+
 pub fn get_column_projection_from_expression(expression: &Expression) -> Vec<String> {
     let mut column_projection = Vec::new();
 
@@ -168,7 +183,6 @@ pub fn get_column_projection_from_expression(expression: &Expression) -> Vec<Str
     column_projection
 }
 
-
 pub fn get_column_name_to_index(metadata: &FileMetaData) -> HashMap<String, usize> {
     metadata
         .schema_descr()
@@ -187,8 +201,10 @@ pub fn get_column_name_to_index(metadata: &FileMetaData) -> HashMap<String, usiz
         .collect()
 }
 
-
-pub fn aggregate_batch(aggregators: &mut Vec<Option<Box<dyn Aggregator>>>, batch: &RecordBatch) -> Result<(), ArrowError>{
+pub fn aggregate_batch(
+    aggregators: &mut Vec<Option<Box<dyn Aggregator>>>,
+    batch: &RecordBatch,
+) -> Result<(), ArrowError> {
     for aggregator in aggregators {
         if let Some(aggregator) = aggregator {
             aggregator.aggregate_batch(batch)?;
@@ -197,7 +213,7 @@ pub fn aggregate_batch(aggregators: &mut Vec<Option<Box<dyn Aggregator>>>, batch
     Ok(())
 }
 
-pub fn tokenize(input: &str) -> Result<Vec<String>, Box<dyn Error>> {
+pub fn tokenize(input: &str) -> Result<Vec<String>, Box<dyn Error + Send + Sync>> {
     let mut tokens = Vec::new();
     let mut current = String::new();
 
@@ -228,7 +244,7 @@ pub fn convert_parquet_type_to_arrow(parquet_type: ParquetType) -> DataType {
         ParquetType::BOOLEAN => DataType::Boolean,
         ParquetType::INT32 => DataType::Int32,
         ParquetType::INT64 => DataType::Int64,
-        ParquetType::INT96 => DataType::Int64, 
+        ParquetType::INT96 => DataType::Int64,
         ParquetType::FLOAT => DataType::Float32,
         ParquetType::DOUBLE => DataType::Float64,
         ParquetType::BYTE_ARRAY => DataType::Utf8,
@@ -237,9 +253,62 @@ pub fn convert_parquet_type_to_arrow(parquet_type: ParquetType) -> DataType {
 }
 
 pub fn get_naive_date_time_from_timestamp(timestamp: i128) -> Option<NaiveDateTime> {
-    let secs = timestamp / 1000;
-    let nanos = ((timestamp % 1000) * 1_000_000) as u32;
-    Utc.timestamp_opt(secs as i64, nanos)
+    let secs: i64 = match (timestamp / 1000).try_into() {
+        Ok(v) => v,
+        Err(_) => return None,
+    };
+    let nanos: u32 = match ((timestamp % 1000) * 1_000_000).try_into() {
+        Ok(v) => v,
+        Err(_) => return None,
+    };
+    Utc.timestamp_opt(secs, nanos)
         .single()
         .map(|dt| dt.naive_utc())
+}
+
+pub struct CountingReader<R> {
+    inner: R,
+    bytes_read: Arc<AtomicUsize>,
+}
+
+impl<R> CountingReader<R> {
+    pub fn new(inner: R, bytes_read: Arc<AtomicUsize>) -> Self {
+        Self { inner, bytes_read }
+    }
+}
+
+impl<R: AsyncRead + Unpin> AsyncRead for CountingReader<R> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        let start_len = buf.filled().len();
+        let inner = Pin::new(&mut self.inner);
+
+        // Perform the actual read
+        match inner.poll_read(cx, buf) {
+            Poll::Ready(Ok(())) => {
+                // Number of bytes read this time
+                let new_len = buf.filled().len();
+                let n = new_len - start_len;
+
+                // Update our counter
+                self.bytes_read.fetch_add(n, Ordering::Relaxed);
+
+                Poll::Ready(Ok(()))
+            }
+            other => other,
+        }
+    }
+}
+
+impl<R: AsyncSeek + Unpin> AsyncSeek for CountingReader<R> {
+    fn start_seek(mut self: Pin<&mut Self>, position: std::io::SeekFrom) -> std::io::Result<()> {
+        Pin::new(&mut self.inner).start_seek(position)
+    }
+
+    fn poll_complete(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<u64>> {
+        Pin::new(&mut self.inner).poll_complete(cx)
+    }
 }
