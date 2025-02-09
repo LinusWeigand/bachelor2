@@ -41,7 +41,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
 
-    all_parquet_paths.sort(); 
+    all_parquet_paths.sort();
 
     // 2) Split into 16 chunks (last chunk might be smaller if not evenly divisible)
     let chunk_size = (all_parquet_paths.len() + NUM_OUTPUT_FILES - 1) / NUM_OUTPUT_FILES;
@@ -101,7 +101,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
                     // Configure writer properties
                     let props = WriterProperties::builder()
-                        .set_compression(Compression::SNAPPY)
+                        .set_compression(Compression::UNCOMPRESSED)
                         .set_max_row_group_size(ROWS_PER_GROUP)
                         .set_statistics_enabled(EnabledStatistics::Chunk)
                         .build();

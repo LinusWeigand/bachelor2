@@ -1,9 +1,13 @@
-use std::{error::Error, path::PathBuf, pin::Pin, sync::Arc};
+use std::{error::Error, path::PathBuf, pin::Pin, process::exit, sync::Arc};
 
 use arrow::array::RecordBatch;
+use arrow2::{datatypes::Schema, io::parquet::read::{infer_schema, read_metadata_async, RowGroupMetaData }};
 use futures::StreamExt;
-use parquet::{arrow::{arrow_reader::ArrowReaderMetadata, async_reader::ParquetRecordBatchStream, AsyncArrowWriter, ParquetRecordBatchStreamBuilder}, basic::Compression, file::{metadata::ParquetMetaData, properties::{EnabledStatistics, WriterProperties}}};
-use tokio::fs::{File, OpenOptions};
+use parquet::{arrow::{async_reader::ParquetRecordBatchStream, AsyncArrowWriter, ParquetRecordBatchStreamBuilder}, basic::Compression, file::{metadata::ParquetMetaData, properties::{EnabledStatistics, WriterProperties}}};
+use parquet2::metadata::ColumnChunkMetaData;
+use serde::{Deserialize, Serialize};
+use tokio::{fs::{File, OpenOptions}, io::BufReader};
+use tokio_util::compat::TokioAsyncReadCompatExt;
 
 const INPUT_FILE_NAME: &str = "test.parquet";
 const OUTPUT_FILE_NAME: &str = "test_output.parquet";
@@ -25,15 +29,32 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
 
 
     let file_size = file.metadata().await?.len();
+    println!("File size: {}", file_size);
+    println!("File size: {:.2}MB", file_size as f64 / 1000. / 1000.);
+
+
     let file_bytes = file_size * 1000;
-    let metadata = ArrowReaderMetadata::load_async(&mut file, Default::default()).await?;
-    let metadata = metadata.metadata();
-    let metadata_size = metadata.memory_size();
-    let ratio = metadata_size as f64 / file_bytes as f64;
+    let mut buf_reader = BufReader::new(file).compat();
+    let metadata = read_metadata_async(&mut buf_reader).await?;
+    let schema = infer_schema(&metadata)?;
+    let row_groups = metadata.row_groups;
+
+    let schema_bytes = get_schema_size(&schema);
+    let row_group_bytes = row_groups.iter().map(|v| {
+        let serializable: SerializableRowGroupMetaData = v.into();
+        let serialized = bincode::serialize(&serializable).unwrap();
+        serialized.len()
+    }).sum::<usize>();
+
+    let metadata_bytes: usize = schema_bytes + row_group_bytes;
+
+
+
+    let ratio = metadata_bytes as f64 / file_bytes as f64;
     println!("Ratio: {:.4}%", ratio * 100.);
     println!("Ziel: 0.05%");
-    let num_row_groups = metadata.num_row_groups();
-    let num_rows = metadata.file_metadata().num_rows();
+    let num_row_groups = row_groups.len();
+    let num_rows = metadata.num_rows;
     let rows_per_group = num_rows as usize / num_row_groups;
     println!("Num Rows: {}, Num Groups: {}, Rows per Group: {}", num_rows, num_row_groups, rows_per_group);
 
@@ -149,5 +170,38 @@ fn _bytes_to_value(bytes: &[u8], column_type: &str) -> Result<f64, Box<dyn Error
             Ok(double_value)
         }
         _ => Err(format!("Unsupported column type: {}", column_type).into()),
+    }
+}
+
+fn get_schema_size(schema: &Schema) -> usize {
+    let serialized = bincode::serialize(schema).unwrap();
+    serialized.len()
+}
+
+fn get_row_group_size(row_group: &RowGroupMetaData) -> usize {
+    let serialized = match bincode::serialize(row_group) {
+        Ok(v) => v,
+        Err(e) => {
+            println!("Error serializing RowGroupMetadata: {:?}", e);
+            exit(1);
+        }
+    };
+    serialized.len()
+}
+#[derive(Serialize, Deserialize)]
+struct SerializableRowGroupMetaData {
+    columns: Vec<ColumnChunkMetaData>,
+    num_rows: usize,
+    total_byte_size: usize,
+}
+
+// Implement conversion
+impl From<&RowGroupMetaData> for SerializableRowGroupMetaData {
+    fn from(row_group: &RowGroupMetaData) -> Self {
+        SerializableRowGroupMetaData {
+            columns: row_group.columns().into(),
+            num_rows: row_group.num_rows(),
+            total_byte_size: row_group.total_byte_size(),
+        }
     }
 }

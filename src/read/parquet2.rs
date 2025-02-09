@@ -75,6 +75,8 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let file_paths: Vec<_> = (1..count).map(|i| {
         format!("{}/merged_{:02}.parquet", folder, i)
     }).collect();
+
+    // let mut tasks = Vec::new();
     let file_paths = load_files(file_paths).await?;
 
     println!("Starting Benchmark...");
@@ -135,6 +137,9 @@ async fn get_next_item_from_reader(
 async fn load_files(
     file_paths: Vec<String>,
 ) -> Result<Vec<(String, arrow2::io::parquet::read::FileMetaData)>, Box<dyn Error + Send + Sync>> {
+    // let mut tasks = Vec::new();
+
+
     let result = futures::stream::iter(file_paths.into_iter().map(|path| {
         async move {
             let file = File::open(&path).await?;
