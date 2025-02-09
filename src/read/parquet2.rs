@@ -12,7 +12,7 @@ use std::process::exit;
 use tokio::fs::File;
 use tokio::time::Instant;
 
-const FILE_PATHS: [&str; 8] = [
+const FILE_PATHS: [&str; 16] = [
     "merged_01.parquet",
     "merged_02.parquet",
     "merged_03.parquet",
@@ -21,14 +21,14 @@ const FILE_PATHS: [&str; 8] = [
     "merged_06.parquet",
     "merged_07.parquet",
     "merged_08.parquet",
-    // "merged_09.parquet",
-    // "merged_10.parquet",
-    // "merged_11.parquet",
-    // "merged_12.parquet",
-    // "merged_13.parquet",
-    // "merged_14.parquet",
-    // "merged_15.parquet",
-    // "merged_16.parquet",
+    "merged_09.parquet",
+    "merged_10.parquet",
+    "merged_11.parquet",
+    "merged_12.parquet",
+    "merged_13.parquet",
+    "merged_14.parquet",
+    "merged_15.parquet",
+    "merged_16.parquet",
 ];
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
@@ -37,6 +37,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     let mut folder = "./snowset-main.parquet";
     let mut read_size: usize = 4 * 1024 * 1024;
+    let mut count: usize = 16;
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "-p" | "--path" => {
@@ -56,20 +57,34 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                     exit(1);
                 }
             }
+            "-c" | "--count" => {
+                if let Some(v) = iter.next() {
+                    count = v.parse().unwrap();
+                } else {
+                    eprintln!("Error: -c/--count requires an argument.");
+                    exit(1);
+                }
+            }
             _ => {
                 eprintln!("Unknown argument: {}", arg);
                 exit(1);
             }
         }
     }
-    let file_paths = load_files(folder).await?;
+    count += 1;
+    let file_paths: Vec<_> = (1..count).map(|i| {
+        format!("{}/merged_{:02}.parquet", folder, i)
+    }).collect();
+    let file_paths = load_files(file_paths).await?;
 
     println!("Starting Benchmark...");
     let start_time = Instant::now();
 
     let mut tasks = Vec::new();
+    
     for (path, metadata) in file_paths {
-        let task = tokio::spawn(async move {
+        let read_size = read_size;
+        let task = tokio::task::spawn_blocking(move || -> Result<(), Box<dyn Error + Send + Sync>>{
             let schema: Schema = infer_schema(&metadata)?;
             let file = std::fs::File::open(&path)?;
             let reader = FileReader::new(
@@ -85,7 +100,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                 let batch = maybe_batch?;
             }
 
-            Ok::<(), Box<dyn Error + Send + Sync>>(())
+            Ok(())
         });
         tasks.push(task);
     }
@@ -95,7 +110,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     }
 
     let elapsed = start_time.elapsed();
-    let size = 0.864 * 8.;
+    let size = 0.864 * count as f64;
     let seconds = elapsed.as_millis() as f64 / 1000.;
     let tp = size / seconds;
     println!("Time: {}", seconds);
@@ -118,21 +133,19 @@ async fn get_next_item_from_reader(
 }
 
 async fn load_files(
-    folder: &str,
+    file_paths: Vec<String>,
 ) -> Result<Vec<(String, arrow2::io::parquet::read::FileMetaData)>, Box<dyn Error + Send + Sync>> {
-    let file_paths = futures::stream::iter(FILE_PATHS.iter().map(|b| {
-        let folder = folder.to_string();
+    let result = futures::stream::iter(file_paths.into_iter().map(|path| {
         async move {
-            let file_path = format!("{}/{}", folder, b);
-            let file = File::open(&file_path).await?;
+            let file = File::open(&path).await?;
             let mut buf_reader = BufReader::new(file).compat();
             let metadata = read_metadata_async(&mut buf_reader).await?;
-            Ok::<_, Box<dyn Error + Send + Sync>>((file_path, metadata))
+            Ok::<_, Box<dyn Error + Send + Sync>>((path, metadata))
         }
     }))
     .buffer_unordered(10)
     .try_collect::<Vec<_>>()
     .await?;
 
-    Ok(file_paths)
+    Ok(result)
 }
