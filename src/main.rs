@@ -1,5 +1,3 @@
-use aggregation::{Aggregation, AggregationOp};
-use arrow::datatypes::DataType;
 use parquet::arrow::arrow_reader::ArrowReaderMetadata;
 use query::MetadataEntry;
 use std::{error::Error, path::PathBuf};

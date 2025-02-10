@@ -1,10 +1,19 @@
 use std::{
-    collections::HashMap, env, error::Error, path::PathBuf, process::exit, sync::{atomic::AtomicUsize, Arc}
+    collections::HashMap,
+    env,
+    error::Error,
+    path::PathBuf,
+    process::exit,
+    sync::{atomic::AtomicUsize, Arc},
 };
 
 use parquet::arrow::arrow_reader::ArrowReaderMetadata;
 
-use tokio::{fs::{read_dir, File}, io::{AsyncBufReadExt, BufReader}, time::Instant};
+use tokio::{
+    fs::{read_dir, File},
+    io::{AsyncBufReadExt, BufReader},
+    time::Instant,
+};
 const ROWS_PER_GROUP: usize = 2;
 
 pub mod aggregation;
@@ -44,7 +53,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut workload = Workload::WorstCase;
     let mut iter = args.iter().skip(1);
     let mut max_counts = 10000;
-    let mut folder_path = "/mnt/raid0/snowset-main.parquet";
+    let mut folder_path = "/mnt/raid0";
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "-m" | "--mode" => {
@@ -65,8 +74,8 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                     eprintln!("Error: -m/--mode requires an argument.");
                     exit(1);
                 }
-            },
-             "-w" | "--workload" => {
+            }
+            "-w" | "--workload" => {
                 if let Some(v) = iter.next() {
                     workload = match v.as_str() {
                         "best-case" => Workload::BestCase,
@@ -85,14 +94,14 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                     exit(1);
                 }
             }
-             "-c" | "--counter" => {
+            "-c" | "--counter" => {
                 if let Some(v) = iter.next() {
                     max_counts = match v.parse::<usize>() {
                         Ok(x) => x,
                         Err(_) => {
                             eprintln!("Error: Unknown counter value {}", v);
                             exit(1);
-                        },
+                        }
                     };
                 } else {
                     eprintln!("Error: -c/--counter requires an argument.");
@@ -125,9 +134,8 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     };
     let expression = Arc::new(expression.unwrap().to_owned());
 
-
     // Get Metadata
-    println!("Reading Metadata...");
+    println!("Reading Metadata");
     let mut metadata_vec = Vec::new();
     let mut dir = read_dir(folder_path).await?;
     let mut counter = 0;
@@ -159,7 +167,6 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         })
         .collect();
 
-
     let bytes_read = futures::future::join_all(queries).await;
     let sum = bytes_read
         .into_iter()
@@ -175,7 +182,10 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let gb = mb / 1_000.;
     println!("+----------------------------------------------+");
     println!("+----------------------------------------------+");
-    println!("Disk Throughput: {:.2}MB/s", mb / duration.as_millis() as f64 * 1000.);
+    println!(
+        "Disk Throughput: {:.2}MB/s",
+        mb / duration.as_millis() as f64 * 1000.
+    );
     println!("Qps: {:.2}", 2002. / duration.as_millis() as f64 * 1000.);
     println!("+----------------------------------------------+");
     println!("GB read: {:.2}GB", gb);
@@ -192,9 +202,7 @@ async fn make_query(
     expression: &str,
     mode: &Mode,
 ) -> Result<Arc<AtomicUsize>, Box<dyn Error + Send + Sync>> {
-    let aggregation = Some(
-        vec![parse::aggregation::parse_aggregation("SUM(Age)")?],
-    );
+    let aggregation = Some(vec![parse::aggregation::parse_aggregation("SUM(Age)")?]);
 
     // Query
     let select_columns = Some(vec!["memoryUsed".to_owned()]);
@@ -215,7 +223,7 @@ async fn make_query(
     Ok(bytes_read)
 }
 
-async fn prepare_workload() -> Result<HashMap<usize, String>, Box<dyn Error + Send + Sync>>{
+async fn prepare_workload() -> Result<HashMap<usize, String>, Box<dyn Error + Send + Sync>> {
     let mut result = HashMap::new();
     let file = File::open("max").await?;
 
@@ -230,4 +238,3 @@ async fn prepare_workload() -> Result<HashMap<usize, String>, Box<dyn Error + Se
     }
     Ok(result)
 }
-
