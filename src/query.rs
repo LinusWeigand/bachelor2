@@ -1,27 +1,28 @@
 use std::{
-    error::Error,
-    path::PathBuf,
-    pin::Pin,
-    sync::{atomic::AtomicUsize, Arc},
+    collections::HashMap, error::Error, path::PathBuf, pin::Pin, sync::{atomic::AtomicUsize, Arc}
 };
 
 use arrow::{
     array::{Array, Float64Array, Int64Array, RecordBatch},
     datatypes::{DataType, Field},
 };
+use arrow2::datatypes::Schema;
 use parquet::arrow::{
     arrow_reader::{ArrowPredicate, ArrowPredicateFn, ArrowReaderMetadata, RowFilter},
     ParquetRecordBatchStreamBuilder, ProjectionMask,
 };
+use parquet2::metadata::RowGroupMetaData;
 
 use crate::{
-    aggregation::{build_aggregator, Aggregation, Aggregator, ScalarValue},
-    bloom_filter::BloomFilter,
-    row_filter,
-    row_group_filter::keep_row_group,
-    utils::{self, Expression},
-    Mode,
+    aggregation::{build_aggregator, Aggregation, Aggregator, ScalarValue}, bloom_filter::BloomFilter, row_filter, row_group_filter::keep_row_group, utils::{self, Expression}, Mode
 };
+
+pub struct MetadataItem {
+    path: PathBuf,
+    schema: Schema,
+    row_groups: Vec<RowGroupMetaData>,
+    name_to_index: HashMap<String, usize>,
+}
 
 pub struct MetadataEntry {
     pub file_path: PathBuf,
@@ -30,18 +31,15 @@ pub struct MetadataEntry {
 }
 
 pub async fn smart_query_parquet(
-    file_path: &PathBuf,
-    metadata: ArrowReaderMetadata,
+    metadata: MetadataItem,
     expression: Option<Expression>,
     select_columns: Option<Vec<String>>,
     aggregations: Option<Vec<Aggregation>>,
     mode: &Mode,
 ) -> Result<(Vec<RecordBatch>, Arc<AtomicUsize>), Box<dyn Error + Send + Sync>> {
-    let file = tokio::fs::File::open(file_path).await?;
+    let file = tokio::fs::File::open(&metadata.path).await?;
     let bytes_read = Arc::new(AtomicUsize::new(0));
     let counting_file = utils::CountingReader::new(file, bytes_read.clone());
-    let parquet_metadata = metadata.metadata();
-    let name_to_index = utils::get_column_name_to_index(&parquet_metadata.file_metadata());
 
     let mask_opt = if let Some(select_columns) = select_columns {
         let column_indices: Vec<usize> = select_columns

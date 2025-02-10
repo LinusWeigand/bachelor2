@@ -8,7 +8,8 @@ use arrow::{array::RecordBatch, datatypes::DataType, error::ArrowError};
 use chrono::{NaiveDateTime, TimeZone, Utc};
 use futures::StreamExt;
 use parquet::basic::Type as ParquetType;
-use parquet::{arrow::async_reader::ParquetRecordBatchStream, file::metadata::FileMetaData};
+use parquet::{arrow::async_reader::ParquetRecordBatchStream, };
+use parquet2::metadata::FileMetaData;
 use tokio::fs::File;
 use tokio::io::{AsyncRead, AsyncSeek, ReadBuf};
 
@@ -185,18 +186,15 @@ pub fn get_column_projection_from_expression(expression: &Expression) -> Vec<Str
 
 pub fn get_column_name_to_index(metadata: &FileMetaData) -> HashMap<String, usize> {
     metadata
-        .schema_descr()
+        .schema()
         .columns()
         .iter()
         .enumerate()
-        .map(|(i, column)| {
-            let column_name = column
-                .path()
-                .to_string()
-                .trim()
-                .trim_matches('"')
-                .to_string();
-            (column_name, i)
+        .filter_map(|(i, column)| {
+            match column.path_in_schema.last() {
+                Some(v) => Some((v.to_owned(), i)),
+                None => None
+            }
         })
         .collect()
 }

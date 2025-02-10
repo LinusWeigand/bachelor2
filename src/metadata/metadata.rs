@@ -1,4 +1,5 @@
 use std::{error::Error, path::PathBuf, pin::Pin, process::exit, sync::Arc};
+ 
 
 use arrow::array::RecordBatch;
 use arrow2::{datatypes::Schema, io::parquet::read::{infer_schema, read_metadata_async, RowGroupMetaData }};

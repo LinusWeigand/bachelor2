@@ -7,13 +7,17 @@ use std::{
     sync::{atomic::AtomicUsize, Arc},
 };
 
+use arrow2::{datatypes::Schema, io::parquet::read::{infer_schema, read_metadata_async}};
 use parquet::arrow::arrow_reader::ArrowReaderMetadata;
 
+use parquet2::metadata::RowGroupMetaData;
+use query::MetadataItem;
 use tokio::{
     fs::{read_dir, File},
     io::{AsyncBufReadExt, BufReader},
     time::Instant,
 };
+use tokio_util::compat::TokioAsyncReadCompatExt;
 const ROWS_PER_GROUP: usize = 2;
 
 pub mod aggregation;
@@ -44,6 +48,7 @@ pub enum Workload {
     ThreeQuarter,
     Real,
 }
+
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
@@ -136,7 +141,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     // Get Metadata
     println!("Reading Metadata");
-    let mut metadata_vec = Vec::new();
+    let mut metadata_vec: Vec<MetadataItem> = Vec::new();
     let mut dir = read_dir(folder_path).await?;
     let mut counter = 0;
     while let Some(entry) = dir.next_entry().await? {
@@ -148,20 +153,26 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
             break;
         }
         counter += 1;
-        let mut file = File::open(&path).await?;
-        let metadata = ArrowReaderMetadata::load_async(&mut file, Default::default()).await?;
-        metadata_vec.push((path, metadata));
+        let file = File::open(&path).await?;
+        
+        let mut buf_reader = BufReader::new(file).compat();
+        let metadata = read_metadata_async(&mut buf_reader).await?;
+        let schema = infer_schema(&metadata)?;
+        let name_to_index = utils::get_column_name_to_index(&metadata);
+        let row_groups = metadata.row_groups;
+        let metadata = MetadataItem { path, schema, row_groups, name_to_index };
+        metadata_vec.push(metadata);
     }
 
     println!("Starting benchmark...");
     let start = Instant::now();
     let queries: Vec<_> = metadata_vec
         .into_iter()
-        .map(|(path, metadata)| {
+        .map(|metadata| {
             let mode = Arc::clone(&mode);
             let expression = Arc::clone(&expression);
             tokio::spawn(async move {
-                let result = make_query(&path, metadata, &expression, &mode).await;
+                let result = make_query(metadata, &expression, &mode).await;
                 result
             })
         })
@@ -197,8 +208,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 }
 
 async fn make_query(
-    file_path: &PathBuf,
-    metadata: ArrowReaderMetadata,
+    metadata: MetadataItem,
     expression: &str,
     mode: &Mode,
 ) -> Result<Arc<AtomicUsize>, Box<dyn Error + Send + Sync>> {
@@ -212,7 +222,6 @@ async fn make_query(
         Some(parse::expression::parse_expression(expression)?)
     };
     let (_, bytes_read) = query::smart_query_parquet(
-        file_path,
         metadata,
         expression,
         select_columns,
