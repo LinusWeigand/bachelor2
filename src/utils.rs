@@ -1,17 +1,21 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::io::{self, Read, Seek, SeekFrom};
 use std::sync::Arc;
-use std::task::{Context, Poll};
 use std::{collections::HashMap, error::Error, pin::Pin};
 
 use crate::aggregation::Aggregator;
-use arrow::{array::RecordBatch, datatypes::DataType, error::ArrowError};
+use arrow::{array::RecordBatch, error::ArrowError};
+use arrow2::array::{BinaryArray, BooleanArray, FixedSizeBinaryArray, FixedSizeListArray, Float32Array, Float64Array, Int16Array, Int32Array, Int64Array, Int8Array, ListArray, StructArray, UInt16Array, UInt32Array, UInt64Array, UInt8Array, Utf8Array};
+use arrow2::chunk::Chunk;
+use arrow2::datatypes::DataType;
 use chrono::{NaiveDateTime, TimeZone, Utc};
 use futures::StreamExt;
+use parquet::arrow::async_reader::ParquetRecordBatchStream;
 use parquet::basic::Type as ParquetType;
-use parquet::{arrow::async_reader::ParquetRecordBatchStream, };
 use parquet2::metadata::FileMetaData;
+use parquet2::schema::types::PhysicalType;
+use parquet2::statistics::{BinaryStatistics, BooleanStatistics, FixedLenStatistics, PrimitiveStatistics, Statistics};
 use tokio::fs::File;
-use tokio::io::{AsyncRead, AsyncSeek, ReadBuf};
 
 #[derive(Clone, Debug)]
 pub struct Condition {
@@ -86,37 +90,40 @@ impl Float for f64 {
     }
 }
 
-pub fn bytes_to_value(bytes: &[u8], column_type: &str) -> Result<ThresholdValue, Box<dyn Error + Send + Sync>> {
+pub fn bytes_to_value(
+    bytes: &[u8],
+    column_type: PhysicalType,
+) -> Result<ThresholdValue, Box<dyn Error + Send + Sync>> {
     match column_type {
-        "INT32" => {
+        PhysicalType::Int32 => {
             if bytes.len() != 4 {
                 return Err("Expected 4 bytes for INT32".into());
             }
             let v = i32::from_le_bytes(bytes.try_into()?);
             Ok(ThresholdValue::Int64(v as i64))
         }
-        "INT64" => {
+        PhysicalType::Int64 => {
             if bytes.len() != 8 {
                 return Err("Expected 8 bytes for INT64".into());
             }
             let v = i64::from_le_bytes(bytes.try_into()?);
             Ok(ThresholdValue::Int64(v))
         }
-        "FLOAT" => {
+        PhysicalType::Float => {
             if bytes.len() != 4 {
                 return Err("Expected 4 bytes for FLOAT".into());
             }
             let v = f32::from_le_bytes(bytes.try_into()?);
             Ok(ThresholdValue::Float64(v as f64))
         }
-        "DOUBLE" => {
+        PhysicalType::Double => {
             if bytes.len() != 8 {
                 return Err("Expected 8 bytes for DOUBLE".into());
             }
             let v = f64::from_le_bytes(bytes.try_into()?);
             Ok(ThresholdValue::Float64(v))
         }
-        "BOOLEAN" => {
+        PhysicalType::Boolean => {
             if bytes.len() != 1 {
                 return Err("Expected 1 bytes for BOOLEAN".into());
             }
@@ -127,38 +134,12 @@ pub fn bytes_to_value(bytes: &[u8], column_type: &str) -> Result<ThresholdValue,
             };
             Ok(ThresholdValue::Boolean(bool_value))
         }
-        "BYTE_ARRAY" => {
+        PhysicalType::ByteArray => {
             use std::str;
             let s = str::from_utf8(bytes)?.to_owned();
             Ok(ThresholdValue::Utf8String(s))
         }
-        _ => Err(format!("Unsupported column type: {}", column_type).into()),
-    }
-}
-
-pub async fn get_next_item_from_reader(
-    pinned_stream: &mut Pin<&mut ParquetRecordBatchStream<File>>,
-) -> Option<RecordBatch> {
-    match &pinned_stream.as_mut().next().await {
-        Some(Ok(record_batch)) => Some(record_batch.clone()),
-        Some(Err(e)) => {
-            eprintln!("Error: {:?}", e);
-            None
-        }
-        None => None,
-    }
-}
-
-pub async fn get_next_item_from_reader_and_count_bytes(
-    pinned_stream: &mut Pin<&mut ParquetRecordBatchStream<CountingReader<File>>>,
-) -> Option<RecordBatch> {
-    match &pinned_stream.as_mut().next().await {
-        Some(Ok(record_batch)) => Some(record_batch.clone()),
-        Some(Err(e)) => {
-            eprintln!("Error: {:?}", e);
-            None
-        }
-        None => None,
+        _ => Err(format!("Unsupported column type: {:?}", column_type).into()),
     }
 }
 
@@ -190,12 +171,20 @@ pub fn get_column_name_to_index(metadata: &FileMetaData) -> HashMap<String, usiz
         .columns()
         .iter()
         .enumerate()
-        .filter_map(|(i, column)| {
-            match column.path_in_schema.last() {
-                Some(v) => Some((v.to_owned(), i)),
-                None => None
-            }
+        .filter_map(|(i, column)| match column.path_in_schema.last() {
+            Some(v) => Some((v.to_owned(), i)),
+            None => None,
         })
+        .collect()
+}
+
+pub fn get_column_names(metadata: &FileMetaData) -> Vec<String> {
+    metadata
+        .schema()
+        .columns()
+        .iter()
+        .filter_map(|column| column.path_in_schema.last())
+        .map(|d| d.to_string())
         .collect()
 }
 
@@ -273,40 +262,75 @@ impl<R> CountingReader<R> {
     pub fn new(inner: R, bytes_read: Arc<AtomicUsize>) -> Self {
         Self { inner, bytes_read }
     }
-}
 
-impl<R: AsyncRead + Unpin> AsyncRead for CountingReader<R> {
-    fn poll_read(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<std::io::Result<()>> {
-        let start_len = buf.filled().len();
-        let inner = Pin::new(&mut self.inner);
-
-        // Perform the actual read
-        match inner.poll_read(cx, buf) {
-            Poll::Ready(Ok(())) => {
-                // Number of bytes read this time
-                let new_len = buf.filled().len();
-                let n = new_len - start_len;
-
-                // Update our counter
-                self.bytes_read.fetch_add(n, Ordering::Relaxed);
-
-                Poll::Ready(Ok(()))
-            }
-            other => other,
-        }
+    pub fn bytes_read(&self) -> usize {
+        self.bytes_read.load(Ordering::Relaxed)
     }
 }
 
-impl<R: AsyncSeek + Unpin> AsyncSeek for CountingReader<R> {
-    fn start_seek(mut self: Pin<&mut Self>, position: std::io::SeekFrom) -> std::io::Result<()> {
-        Pin::new(&mut self.inner).start_seek(position)
+
+
+impl<R: Read> Read for CountingReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        self.bytes_read.fetch_add(n, Ordering::Relaxed);
+        Ok(n)
+    }
+}
+
+impl<R: Seek> Seek for CountingReader<R> {
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        self.inner.seek(pos)
+    }
+}
+
+pub fn get_min_max_threshold(stats: &Arc<dyn Statistics>) -> Option<(ThresholdValue, ThresholdValue)> {
+    if let Some(typed_stats) = stats.as_any().downcast_ref::<BinaryStatistics>() {
+        let min_str = String::from_utf8(typed_stats.min_value.clone()?).ok()?;
+        let max_str = String::from_utf8(typed_stats.max_value.clone()?).ok()?;
+        return Some((ThresholdValue::Utf8String(min_str), ThresholdValue::Utf8String(max_str)));
     }
 
-    fn poll_complete(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<u64>> {
-        Pin::new(&mut self.inner).poll_complete(cx)
+    if let Some(typed_stats) = stats.as_any().downcast_ref::<BooleanStatistics>() {
+        return Some((ThresholdValue::Boolean(typed_stats.min_value?), ThresholdValue::Boolean(typed_stats.max_value?)));
     }
+
+    if let Some(typed_stats) = stats.as_any().downcast_ref::<FixedLenStatistics>() {
+        let min_str = String::from_utf8(typed_stats.min_value.clone()?).ok()?;
+        let max_str = String::from_utf8(typed_stats.max_value.clone()?).ok()?;
+        return Some((ThresholdValue::Utf8String(min_str), ThresholdValue::Utf8String(max_str)));
+    }
+
+    if let Some(typed_stats) = stats.as_any().downcast_ref::<PrimitiveStatistics<i64>>() {
+        return Some((ThresholdValue::Int64(typed_stats.min_value?), ThresholdValue::Int64(typed_stats.max_value?)));
+    }
+    if let Some(typed_stats) = stats.as_any().downcast_ref::<PrimitiveStatistics<i32>>() {
+        return Some((ThresholdValue::Int64(typed_stats.min_value? as i64), ThresholdValue::Int64(typed_stats.max_value? as i64)));
+    }
+    if let Some(typed_stats) = stats.as_any().downcast_ref::<PrimitiveStatistics<f32>>() {
+        return Some((ThresholdValue::Float64(typed_stats.min_value? as f64), ThresholdValue::Float64(typed_stats.max_value? as f64)));
+    }
+    if let Some(typed_stats) = stats.as_any().downcast_ref::<PrimitiveStatistics<f64>>() {
+        return Some((ThresholdValue::Float64(typed_stats.min_value?), ThresholdValue::Float64(typed_stats.max_value?)));
+    }
+    println!("No Downcast :(");
+
+    None
+}
+
+pub fn aggregate_chunks(chunks: &[Chunk<Box<dyn arrow2::array::Array>>]) -> Option<Chunk<Box<dyn arrow2::array::Array>>> {
+    if chunks.is_empty() {
+        return None;
+    }
+
+    let num_columns = chunks[0].columns().len();
+    let mut concatenated_columns = Vec::new();
+
+    for col_idx in 0..num_columns {
+        let column_arrays: Vec<&dyn arrow2::array::Array> = chunks.iter().map(|chunk| chunk.columns()[col_idx].as_ref()).collect();
+        let concatenated_array = arrow2::compute::concatenate::concatenate(&column_arrays).ok()?;
+        concatenated_columns.push(concatenated_array);
+    }
+
+    Some(Chunk::new(concatenated_columns))
 }

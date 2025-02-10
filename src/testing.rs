@@ -1,29 +1,28 @@
 use core::f32;
-use std::{env, error::Error, path::PathBuf, process::exit, sync::Arc};
+use std::{error::Error, path::PathBuf, sync::Arc};
 
 use arrow::{
     array::{BooleanArray, Date64Array, Float32Array, Int8Array, RecordBatch, StringArray},
     datatypes::{DataType, Field, Schema},
-    util::pretty::print_batches,
 };
+use arrow2::{io::parquet::read::{infer_schema, read_metadata_async}};
 use parquet::{
-    arrow::{arrow_reader::ArrowReaderMetadata, AsyncArrowWriter},
+    arrow::{AsyncArrowWriter},
     basic::Compression,
     file::properties::{EnabledStatistics, WriterProperties},
 };
 
-use query::MetadataEntry;
-use tokio::fs::{File, OpenOptions};
+use query::MetadataItem;
+use tokio::{fs::{File, OpenOptions}, io::BufReader};
+use tokio_util::compat::TokioAsyncReadCompatExt;
 const ROWS_PER_GROUP: usize = 2;
 const INPUT_FILE_PATH: &str = "testing_input.parquet";
 const OUTPUT_FILE_PATH: &str = "testing_output.parquet";
 
 pub mod aggregation;
 pub mod bloom_filter;
-pub mod more_row_groups;
 pub mod parse;
 pub mod query;
-pub mod row_filter;
 pub mod row_group_filter;
 pub mod utils;
 
@@ -39,51 +38,67 @@ pub enum Mode {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
+    let aggregation = "SUM(Age)";
+    let expression = "";
+    // let expression = "Float >= 44.44";
+    // let select_columns = "Name";
+    let select_columns = "";
+    let mode = Mode::Group;
     write_example_file().await?;
 
-    let input_file = File::open(INPUT_FILE_PATH).await?;
-    let output_file = OpenOptions::new()
-        .write(true)
-        .truncate(true)
-        .create(true)
-        .open(OUTPUT_FILE_PATH)
-        .await?;
-
-    // Get Bloom Filters
-    let bloom_filters =
-        more_row_groups::prepare_file(input_file, output_file, ROWS_PER_GROUP).await?;
-
     // Get Metadata
-    let file_path = PathBuf::from(OUTPUT_FILE_PATH);
-    let mut file = File::open(&file_path).await?;
-    let metadata = ArrowReaderMetadata::load_async(&mut file, Default::default()).await?;
+    let path = PathBuf::from(OUTPUT_FILE_PATH);
+    let file = File::open(&path).await?;
+    let mut buf_reader = BufReader::new(file).compat();
+    let metadata = read_metadata_async(&mut buf_reader).await?;
+    let schema = infer_schema(&metadata)?;
+    let name_to_index = utils::get_column_name_to_index(&metadata);
+    let columns_to_print;
 
-    //Aggregation
-    let aggregation = Some(vec![parse::aggregation::parse_aggregation("SUM(Age)")?]);
+    let aggregation = match aggregation {
+        "" => None,
+        v => Some(vec![parse::aggregation::parse_aggregation(v)?])
+    } ;
+    let select_columns = match select_columns {
+        "" => {
+            columns_to_print = utils::get_column_names(&metadata);
+            None
+        },
+        v => {
+            let projection: Vec<String> = select_columns.split(",").map(|v| v.to_owned()).collect();
+            columns_to_print = projection.clone();
+            Some(projection)
+        }
+    };
+    let expression = match expression {
+        "" => None,
+        v => Some(parse::expression::parse_expression(v)?),
+    };
+    let row_groups = metadata.row_groups;
 
-    let metadata_entry = MetadataEntry {
-        file_path,
-        metadata,
-        bloom_filters,
+    let metadata_item = MetadataItem {
+        path,
+        schema,
+        row_groups,
+        name_to_index,
     };
 
     // Query
-    let select_columns = Some(vec!["Graduated".to_owned()]);
-    let input = "Age < -40";
-    let expression = if input.is_empty() {
-        None
-    } else {
-        Some(parse::expression::parse_expression(input)?)
-    };
-    // let (results, bytes_read) =
-    //     query::smart_query_parquet(&metadata_entry, expression, select_columns, aggregation, Mode::Base)
-    //         .await?;
-    //
-    // print_batches(&results)?;
-    // println!("Bytes read: {:?}", bytes_read);
+    let (results, bytes_read) =
+        query::smart_query_parquet(metadata_item, expression, select_columns, aggregation, &mode)
+            .await?;
+
+    println!("Bytes read: {:?}", bytes_read);
+
+    let result = utils::aggregate_chunks(results.as_slice());
+    if let Some(result) = result {
+        let output = arrow2::io::print::write(&[result.clone()], &columns_to_print);
+        println!("{}", output);
+    }
 
     Ok(())
 }
+
 
 async fn write_example_file() -> Result<(), Box<dyn Error + Send + Sync>> {
     // Example Parquet

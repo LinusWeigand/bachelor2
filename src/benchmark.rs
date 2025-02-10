@@ -2,15 +2,12 @@ use std::{
     collections::HashMap,
     env,
     error::Error,
-    path::PathBuf,
     process::exit,
     sync::{atomic::AtomicUsize, Arc},
 };
 
-use arrow2::{datatypes::Schema, io::parquet::read::{infer_schema, read_metadata_async}};
-use parquet::arrow::arrow_reader::ArrowReaderMetadata;
+use arrow2::{io::parquet::read::{infer_schema, read_metadata_async}};
 
-use parquet2::metadata::RowGroupMetaData;
 use query::MetadataItem;
 use tokio::{
     fs::{read_dir, File},
@@ -22,10 +19,8 @@ const ROWS_PER_GROUP: usize = 2;
 
 pub mod aggregation;
 pub mod bloom_filter;
-pub mod more_row_groups;
 pub mod parse;
 pub mod query;
-pub mod row_filter;
 pub mod row_group_filter;
 pub mod utils;
 
