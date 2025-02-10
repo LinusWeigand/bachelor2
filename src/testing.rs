@@ -34,12 +34,12 @@ pub enum Mode {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
-    let aggregation = "SUM(Age)";
+    let aggregation = "SUM(Age)  ,  SUM(Age),  SUM(Float)";
     let expression = "";
     // let expression = "Float >= 44.44";
     // let select_columns = "Name";
     let select_columns = "";
-    let mode = Mode::Group;
+    let mode = Mode::Aggr;
     write_example_file().await?;
 
     // Get Metadata
@@ -53,7 +53,9 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     let aggregation = match aggregation {
         "" => None,
-        v => Some(vec![parse::aggregation::parse_aggregation(v)?]),
+        v => {
+            Some(v.split(",").filter_map(|v| parse::aggregation::parse_aggregation(v.trim()).ok()).collect())
+        },
     };
     let select_columns = match select_columns {
         "" => {

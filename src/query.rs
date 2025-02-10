@@ -50,20 +50,22 @@ pub async fn smart_query_parquet(
     let mut aggregators = Vec::new();
     if mode == &Mode::Aggr {
         if let Some(aggregations) = aggregations {
-            let mut aggregators: Vec<Option<Box<dyn Aggregator>>> = Vec::new();
             for aggregation in aggregations {
                 let column_name = aggregation.column_name;
                 let aggregation_op = aggregation.aggregation_op;
 
+                println!("Aggregation found");
                 let column = match metadata.schema.fields.iter().find(|field| field.name == column_name) {
                     Some(v) => v,
                     None => continue,
                 };
 
+                println!("Column found");
                 let column_index = match metadata.name_to_index.get(&column_name) {
                     Some(v) => *v,
                     None => continue,
                 };
+                println!("Column index found");
                 let data_type = column.data_type();
                 aggregators.push(build_aggregator(
                     column_index,
@@ -71,9 +73,13 @@ pub async fn smart_query_parquet(
                     aggregation_op,
                     data_type,
                 ));
+                println!("Pushed");
+                println!("Aggregator length: {}", aggregators.len());
             }
         }
     }
+
+    println!("Aggregator length: {}", aggregators.len());
 
     let batch_size = Some(550 * 128);
     let limit = None;
