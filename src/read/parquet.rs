@@ -1,16 +1,16 @@
-use std::env;
-use std::error::Error;
-use std::pin::Pin;
-use std::process::exit;
 use arrow::array::RecordBatch;
 use futures::stream::{StreamExt, TryStreamExt};
 use parquet::arrow::arrow_reader::ArrowReaderMetadata;
 use parquet::arrow::async_reader::ParquetRecordBatchStream;
 use parquet::arrow::ParquetRecordBatchStreamBuilder;
+use std::env;
+use std::error::Error;
+use std::pin::Pin;
+use std::process::exit;
 use tokio::fs::File;
 use tokio::time::Instant;
 
-const FILE_PATHS: [&str; 8] = [
+const FILE_PATHS: [&str; 16] = [
     "merged_01.parquet",
     "merged_02.parquet",
     "merged_03.parquet",
@@ -19,22 +19,23 @@ const FILE_PATHS: [&str; 8] = [
     "merged_06.parquet",
     "merged_07.parquet",
     "merged_08.parquet",
-    // "merged_09.parquet",
-    // "merged_10.parquet",
-    // "merged_11.parquet",
-    // "merged_12.parquet",
-    // "merged_13.parquet",
-    // "merged_14.parquet",
-    // "merged_15.parquet",
-    // "merged_16.parquet",
+    "merged_09.parquet",
+    "merged_10.parquet",
+    "merged_11.parquet",
+    "merged_12.parquet",
+    "merged_13.parquet",
+    "merged_14.parquet",
+    "merged_15.parquet",
+    "merged_16.parquet",
 ];
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>>{
+async fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = env::args().collect();
     let mut iter = args.iter().skip(1);
 
     let mut folder = "./snowset-main.parquet";
     let mut read_size: usize = 4 * 1024 * 1024;
+    let mut count: usize = 16;
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "-p" | "--path" => {
@@ -54,12 +55,22 @@ async fn main() -> Result<(), Box<dyn Error>>{
                     exit(1);
                 }
             }
+            "-c" | "--count" => {
+                if let Some(v) = iter.next() {
+                    count = v.parse().unwrap();
+                } else {
+                    eprintln!("Error: -c/--count requires an argument.");
+                    exit(1);
+                }
+            }
             _ => {
                 eprintln!("Unknown argument: {}", arg);
                 exit(1);
             }
         }
     }
+    count += 1;
+    println!("Loading Metadata");
     let file_paths = load_files(folder).await?;
 
     println!("Starting Benchmark...");
@@ -75,15 +86,11 @@ async fn main() -> Result<(), Box<dyn Error>>{
             let mut stream = builder.build()?;
             let mut pinned_stream = Pin::new(&mut stream);
 
-            let mut record_batch = get_next_item_from_reader(&mut pinned_stream)
-                .await
-                .unwrap();
+            let mut record_batch = get_next_item_from_reader(&mut pinned_stream).await.unwrap();
 
-            while let Some(batch) = get_next_item_from_reader(&mut pinned_stream).await
-            {
+            while let Some(batch) = get_next_item_from_reader(&mut pinned_stream).await {
                 record_batch = batch;
             }
-            
 
             Ok::<(), std::io::Error>(())
         });
@@ -101,7 +108,6 @@ async fn main() -> Result<(), Box<dyn Error>>{
     println!("Time: {}", seconds);
     println!("Throughput: {}", tp);
 
-
     Ok(())
 }
 
@@ -118,8 +124,9 @@ async fn get_next_item_from_reader(
     }
 }
 
-
-async fn load_files(folder: &str) -> Result<Vec<(String, ArrowReaderMetadata)>, Box<dyn std::error::Error>> {
+async fn load_files(
+    folder: &str,
+) -> Result<Vec<(String, ArrowReaderMetadata)>, Box<dyn std::error::Error>> {
     let file_paths = futures::stream::iter(FILE_PATHS.iter().map(|b| {
         let folder = folder.to_string();
         async move {
