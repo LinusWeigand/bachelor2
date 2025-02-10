@@ -3,14 +3,14 @@ use arrow2::datatypes::Schema;
 use arrow2::io::parquet::read::{infer_schema, read_metadata_async, FileReader};
 use futures::stream::{StreamExt, TryStreamExt};
 use parquet::arrow::async_reader::ParquetRecordBatchStream;
-use tokio::io::BufReader;
-use tokio_util::compat::TokioAsyncReadCompatExt;
 use std::env;
 use std::error::Error;
 use std::pin::Pin;
 use std::process::exit;
 use tokio::fs::File;
+use tokio::io::BufReader;
 use tokio::time::Instant;
+use tokio_util::compat::TokioAsyncReadCompatExt;
 
 const FILE_PATHS: [&str; 16] = [
     "merged_01.parquet",
@@ -72,38 +72,38 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         }
     }
     count += 1;
-    let file_paths: Vec<_> = (1..count).map(|i| {
-        format!("{}/merged_{:02}.parquet", folder, i)
-    }).collect();
+    let file_paths: Vec<_> = (1..count)
+        .map(|i| format!("{}/merged_{:02}.parquet", folder, i))
+        .collect();
 
-    // let mut tasks = Vec::new();
     let file_paths = load_files(file_paths).await?;
 
     println!("Starting Benchmark...");
     let start_time = Instant::now();
 
     let mut tasks = Vec::new();
-    
+
     for (path, metadata) in file_paths {
         let read_size = read_size;
-        let task = tokio::task::spawn_blocking(move || -> Result<(), Box<dyn Error + Send + Sync>>{
-            let schema: Schema = infer_schema(&metadata)?;
-            let file = std::fs::File::open(&path)?;
-            let reader = FileReader::new(
-                file,
-                metadata.row_groups,
-                schema,
-                Some(read_size),
-                None,
-                None,
-            );
+        let task =
+            tokio::task::spawn_blocking(move || -> Result<(), Box<dyn Error + Send + Sync>> {
+                let schema: Schema = infer_schema(&metadata)?;
+                let file = std::fs::File::open(&path)?;
+                let reader = FileReader::new(
+                    file,
+                    metadata.row_groups,
+                    schema,
+                    Some(read_size),
+                    None,
+                    None,
+                );
 
-            for maybe_batch in reader {
-                let batch = maybe_batch?;
-            }
+                for maybe_batch in reader {
+                    let batch = maybe_batch?;
+                }
 
-            Ok(())
-        });
+                Ok(())
+            });
         tasks.push(task);
     }
 
@@ -137,16 +137,11 @@ async fn get_next_item_from_reader(
 async fn load_files(
     file_paths: Vec<String>,
 ) -> Result<Vec<(String, arrow2::io::parquet::read::FileMetaData)>, Box<dyn Error + Send + Sync>> {
-    // let mut tasks = Vec::new();
-
-
-    let result = futures::stream::iter(file_paths.into_iter().map(|path| {
-        async move {
-            let file = File::open(&path).await?;
-            let mut buf_reader = BufReader::new(file).compat();
-            let metadata = read_metadata_async(&mut buf_reader).await?;
-            Ok::<_, Box<dyn Error + Send + Sync>>((path, metadata))
-        }
+    let result = futures::stream::iter(file_paths.into_iter().map(|path| async move {
+        let file = File::open(&path).await?;
+        let mut buf_reader = BufReader::new(file).compat();
+        let metadata = read_metadata_async(&mut buf_reader).await?;
+        Ok::<_, Box<dyn Error + Send + Sync>>((path, metadata))
     }))
     .buffer_unordered(10)
     .try_collect::<Vec<_>>()
