@@ -6,7 +6,7 @@ use parquet::{
     arrow::{
         async_reader::ParquetRecordBatchStream, AsyncArrowWriter, ParquetRecordBatchStreamBuilder,
     },
-    basic::Compression,
+    basic::{Compression, Encoding},
     file::properties::{EnabledStatistics, WriterProperties},
 };
 use tokio::{
@@ -15,7 +15,7 @@ use tokio::{
 };
 
 const INPUT_FOLDER_PATH: &str = "./snowset-main.parquet";
-const NUM_OUTPUT_FILES: usize = 1;
+const NUM_OUTPUT_FILES: usize = 16;
 const ROWS_PER_GROUP: usize = 550;
 
 #[tokio::main]
@@ -48,12 +48,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut file_chunks = all_parquet_paths.chunks(chunk_size).enumerate();
 
     // 3) For each chunk, create one merged output parquet file
-    let mut counter = 0;
     while let Some((chunk_index, chunk_paths)) = file_chunks.next() {
-        counter += 1;
-        if counter < 8 && counter != 1 {
-            continue;
-        }
         if chunk_paths.is_empty() {
             continue;
         }
@@ -101,9 +96,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
                     // Configure writer properties
                     let props = WriterProperties::builder()
-                        .set_compression(Compression::UNCOMPRESSED)
+                        .set_compression(Compression::SNAPPY)
                         .set_max_row_group_size(ROWS_PER_GROUP)
                         .set_statistics_enabled(EnabledStatistics::Chunk)
+                        .set_dictionary_enabled(false)
+                        .set_encoding(Encoding::PLAIN)
                         .build();
 
                     // Open the output file (only once per chunk)
