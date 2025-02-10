@@ -1,19 +1,15 @@
 use core::f32;
+use arrow::{array::{BooleanArray, Date64Array, Float32Array, Int8Array, RecordBatch, StringArray}, datatypes::{DataType, Field, Schema}};
+use parquet::{arrow::AsyncArrowWriter, basic::Compression, file::properties::{EnabledStatistics, WriterProperties}};
+use tokio::{fs::OpenOptions, io::BufReader};
 use std::{error::Error, path::PathBuf, sync::Arc};
 
-use arrow::{
-    array::{BooleanArray, Date64Array, Float32Array, Int8Array, RecordBatch, StringArray},
-    datatypes::{DataType, Field, Schema},
-};
-use arrow2::{io::parquet::read::{infer_schema, read_metadata_async}};
-use parquet::{
-    arrow::{AsyncArrowWriter},
-    basic::Compression,
-    file::properties::{EnabledStatistics, WriterProperties},
-};
+use arrow2::{io::parquet::{read::{infer_schema, read_metadata_async}}};
 
 use query::MetadataItem;
-use tokio::{fs::{File, OpenOptions}, io::BufReader};
+use tokio::{
+    fs::{File}
+};
 use tokio_util::compat::TokioAsyncReadCompatExt;
 const ROWS_PER_GROUP: usize = 2;
 const INPUT_FILE_PATH: &str = "testing_input.parquet";
@@ -57,15 +53,15 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     let aggregation = match aggregation {
         "" => None,
-        v => Some(vec![parse::aggregation::parse_aggregation(v)?])
-    } ;
+        v => Some(vec![parse::aggregation::parse_aggregation(v)?]),
+    };
     let select_columns = match select_columns {
         "" => {
             columns_to_print = utils::get_column_names(&metadata);
             None
-        },
+        }
         v => {
-            let projection: Vec<String> = select_columns.split(",").map(|v| v.to_owned()).collect();
+            let projection: Vec<String> = v.split(",").map(|v| v.to_owned()).collect();
             columns_to_print = projection.clone();
             Some(projection)
         }
@@ -84,9 +80,14 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     };
 
     // Query
-    let (results, bytes_read) =
-        query::smart_query_parquet(metadata_item, expression, select_columns, aggregation, &mode)
-            .await?;
+    let (results, bytes_read, aggr_table) = query::smart_query_parquet(
+        metadata_item,
+        expression,
+        select_columns,
+        aggregation,
+        &mode,
+    )
+    .await?;
 
     println!("Bytes read: {:?}", bytes_read);
 
@@ -95,10 +96,13 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         let output = arrow2::io::print::write(&[result.clone()], &columns_to_print);
         println!("{}", output);
     }
+    if let Some(aggr_table) = aggr_table {
+        let output = arrow2::io::print::write(&[aggr_table.chunk], aggr_table.names.as_slice());
+        println!("{}", output);
+    }
 
     Ok(())
 }
-
 
 async fn write_example_file() -> Result<(), Box<dyn Error + Send + Sync>> {
     // Example Parquet
@@ -159,3 +163,5 @@ async fn write_example_file() -> Result<(), Box<dyn Error + Send + Sync>> {
     writer.close().await?;
     Ok(())
 }
+
+

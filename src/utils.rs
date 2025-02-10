@@ -1,21 +1,20 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::io::{self, Read, Seek, SeekFrom};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::{collections::HashMap, error::Error, pin::Pin};
+use std::{collections::HashMap, error::Error};
 
 use crate::aggregation::Aggregator;
-use arrow::{array::RecordBatch, error::ArrowError};
-use arrow2::array::{BinaryArray, BooleanArray, FixedSizeBinaryArray, FixedSizeListArray, Float32Array, Float64Array, Int16Array, Int32Array, Int64Array, Int8Array, ListArray, StructArray, UInt16Array, UInt32Array, UInt64Array, UInt8Array, Utf8Array};
+use arrow2::array::Array;
 use arrow2::chunk::Chunk;
 use arrow2::datatypes::DataType;
+use arrow2::error::Error as ArrowError;
 use chrono::{NaiveDateTime, TimeZone, Utc};
 use futures::StreamExt;
-use parquet::arrow::async_reader::ParquetRecordBatchStream;
-use parquet::basic::Type as ParquetType;
 use parquet2::metadata::FileMetaData;
 use parquet2::schema::types::PhysicalType;
-use parquet2::statistics::{BinaryStatistics, BooleanStatistics, FixedLenStatistics, PrimitiveStatistics, Statistics};
-use tokio::fs::File;
+use parquet2::statistics::{
+    BinaryStatistics, BooleanStatistics, FixedLenStatistics, PrimitiveStatistics, Statistics,
+};
 
 #[derive(Clone, Debug)]
 pub struct Condition {
@@ -190,7 +189,7 @@ pub fn get_column_names(metadata: &FileMetaData) -> Vec<String> {
 
 pub fn aggregate_batch(
     aggregators: &mut Vec<Option<Box<dyn Aggregator>>>,
-    batch: &RecordBatch,
+    batch: &Chunk<Box<dyn Array>>,
 ) -> Result<(), ArrowError> {
     for aggregator in aggregators {
         if let Some(aggregator) = aggregator {
@@ -226,24 +225,21 @@ pub fn tokenize(input: &str) -> Result<Vec<String>, Box<dyn Error + Send + Sync>
     Ok(tokens)
 }
 
-pub fn convert_parquet_type_to_arrow(parquet_type: ParquetType) -> DataType {
-    match parquet_type {
-        ParquetType::BOOLEAN => DataType::Boolean,
-        ParquetType::INT32 => DataType::Int32,
-        ParquetType::INT64 => DataType::Int64,
-        ParquetType::INT96 => DataType::Int64,
-        ParquetType::FLOAT => DataType::Float32,
-        ParquetType::DOUBLE => DataType::Float64,
-        ParquetType::BYTE_ARRAY => DataType::Utf8,
-        ParquetType::FIXED_LEN_BYTE_ARRAY => DataType::Binary,
-    }
-}
+// pub fn convert_parquet_type_to_arrow(parquet_type: ParquetType) -> DataType {
+//     match parquet_type {
+//         ParquetType::BOOLEAN => DataType::Boolean,
+//         ParquetType::INT32 => DataType::Int32,
+//         ParquetType::INT64 => DataType::Int64,
+//         ParquetType::INT96 => DataType::Int64,
+//         ParquetType::FLOAT => DataType::Float32,
+//         ParquetType::DOUBLE => DataType::Float64,
+//         ParquetType::BYTE_ARRAY => DataType::Utf8,
+//         ParquetType::FIXED_LEN_BYTE_ARRAY => DataType::Binary,
+//     }
+// }
 
-pub fn get_naive_date_time_from_timestamp(timestamp: i128) -> Option<NaiveDateTime> {
-    let secs: i64 = match (timestamp / 1000).try_into() {
-        Ok(v) => v,
-        Err(_) => return None,
-    };
+pub fn get_naive_date_time_from_timestamp(timestamp: i64) -> Option<NaiveDateTime> {
+    let secs = timestamp / 1000;
     let nanos: u32 = match ((timestamp % 1000) * 1_000_000).try_into() {
         Ok(v) => v,
         Err(_) => return None,
@@ -268,8 +264,6 @@ impl<R> CountingReader<R> {
     }
 }
 
-
-
 impl<R: Read> Read for CountingReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let n = self.inner.read(buf)?;
@@ -284,41 +278,66 @@ impl<R: Seek> Seek for CountingReader<R> {
     }
 }
 
-pub fn get_min_max_threshold(stats: &Arc<dyn Statistics>) -> Option<(ThresholdValue, ThresholdValue)> {
+pub fn get_min_max_threshold(
+    stats: &Arc<dyn Statistics>,
+) -> Option<(ThresholdValue, ThresholdValue)> {
     if let Some(typed_stats) = stats.as_any().downcast_ref::<BinaryStatistics>() {
         let min_str = String::from_utf8(typed_stats.min_value.clone()?).ok()?;
         let max_str = String::from_utf8(typed_stats.max_value.clone()?).ok()?;
-        return Some((ThresholdValue::Utf8String(min_str), ThresholdValue::Utf8String(max_str)));
+        return Some((
+            ThresholdValue::Utf8String(min_str),
+            ThresholdValue::Utf8String(max_str),
+        ));
     }
 
     if let Some(typed_stats) = stats.as_any().downcast_ref::<BooleanStatistics>() {
-        return Some((ThresholdValue::Boolean(typed_stats.min_value?), ThresholdValue::Boolean(typed_stats.max_value?)));
+        return Some((
+            ThresholdValue::Boolean(typed_stats.min_value?),
+            ThresholdValue::Boolean(typed_stats.max_value?),
+        ));
     }
 
     if let Some(typed_stats) = stats.as_any().downcast_ref::<FixedLenStatistics>() {
         let min_str = String::from_utf8(typed_stats.min_value.clone()?).ok()?;
         let max_str = String::from_utf8(typed_stats.max_value.clone()?).ok()?;
-        return Some((ThresholdValue::Utf8String(min_str), ThresholdValue::Utf8String(max_str)));
+        return Some((
+            ThresholdValue::Utf8String(min_str),
+            ThresholdValue::Utf8String(max_str),
+        ));
     }
 
     if let Some(typed_stats) = stats.as_any().downcast_ref::<PrimitiveStatistics<i64>>() {
-        return Some((ThresholdValue::Int64(typed_stats.min_value?), ThresholdValue::Int64(typed_stats.max_value?)));
+        return Some((
+            ThresholdValue::Int64(typed_stats.min_value?),
+            ThresholdValue::Int64(typed_stats.max_value?),
+        ));
     }
     if let Some(typed_stats) = stats.as_any().downcast_ref::<PrimitiveStatistics<i32>>() {
-        return Some((ThresholdValue::Int64(typed_stats.min_value? as i64), ThresholdValue::Int64(typed_stats.max_value? as i64)));
+        return Some((
+            ThresholdValue::Int64(typed_stats.min_value? as i64),
+            ThresholdValue::Int64(typed_stats.max_value? as i64),
+        ));
     }
     if let Some(typed_stats) = stats.as_any().downcast_ref::<PrimitiveStatistics<f32>>() {
-        return Some((ThresholdValue::Float64(typed_stats.min_value? as f64), ThresholdValue::Float64(typed_stats.max_value? as f64)));
+        return Some((
+            ThresholdValue::Float64(typed_stats.min_value? as f64),
+            ThresholdValue::Float64(typed_stats.max_value? as f64),
+        ));
     }
     if let Some(typed_stats) = stats.as_any().downcast_ref::<PrimitiveStatistics<f64>>() {
-        return Some((ThresholdValue::Float64(typed_stats.min_value?), ThresholdValue::Float64(typed_stats.max_value?)));
+        return Some((
+            ThresholdValue::Float64(typed_stats.min_value?),
+            ThresholdValue::Float64(typed_stats.max_value?),
+        ));
     }
     println!("No Downcast :(");
 
     None
 }
 
-pub fn aggregate_chunks(chunks: &[Chunk<Box<dyn arrow2::array::Array>>]) -> Option<Chunk<Box<dyn arrow2::array::Array>>> {
+pub fn aggregate_chunks(
+    chunks: &[Chunk<Box<dyn arrow2::array::Array>>],
+) -> Option<Chunk<Box<dyn arrow2::array::Array>>> {
     if chunks.is_empty() {
         return None;
     }
@@ -327,7 +346,10 @@ pub fn aggregate_chunks(chunks: &[Chunk<Box<dyn arrow2::array::Array>>]) -> Opti
     let mut concatenated_columns = Vec::new();
 
     for col_idx in 0..num_columns {
-        let column_arrays: Vec<&dyn arrow2::array::Array> = chunks.iter().map(|chunk| chunk.columns()[col_idx].as_ref()).collect();
+        let column_arrays: Vec<&dyn arrow2::array::Array> = chunks
+            .iter()
+            .map(|chunk| chunk.columns()[col_idx].as_ref())
+            .collect();
         let concatenated_array = arrow2::compute::concatenate::concatenate(&column_arrays).ok()?;
         concatenated_columns.push(concatenated_array);
     }

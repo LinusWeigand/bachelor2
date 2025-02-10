@@ -6,7 +6,7 @@ use std::{
     sync::{atomic::AtomicUsize, Arc},
 };
 
-use arrow2::{io::parquet::read::{infer_schema, read_metadata_async}};
+use arrow2::io::parquet::read::{infer_schema, read_metadata_async};
 
 use query::MetadataItem;
 use tokio::{
@@ -43,7 +43,6 @@ pub enum Workload {
     ThreeQuarter,
     Real,
 }
-
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
@@ -149,13 +148,18 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         }
         counter += 1;
         let file = File::open(&path).await?;
-        
+
         let mut buf_reader = BufReader::new(file).compat();
         let metadata = read_metadata_async(&mut buf_reader).await?;
         let schema = infer_schema(&metadata)?;
         let name_to_index = utils::get_column_name_to_index(&metadata);
         let row_groups = metadata.row_groups;
-        let metadata = MetadataItem { path, schema, row_groups, name_to_index };
+        let metadata = MetadataItem {
+            path,
+            schema,
+            row_groups,
+            name_to_index,
+        };
         metadata_vec.push(metadata);
     }
 
@@ -216,14 +220,8 @@ async fn make_query(
     } else {
         Some(parse::expression::parse_expression(expression)?)
     };
-    let (_, bytes_read) = query::smart_query_parquet(
-        metadata,
-        expression,
-        select_columns,
-        aggregation,
-        mode,
-    )
-    .await?;
+    let (_, bytes_read, aggr_table) =
+        query::smart_query_parquet(metadata, expression, select_columns, aggregation, mode).await?;
     Ok(bytes_read)
 }
 
