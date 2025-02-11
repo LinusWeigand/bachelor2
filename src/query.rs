@@ -122,7 +122,7 @@ pub async fn smart_query_parquet(
         };
         if features.contains(&Feature::Row) {
             if let Some(ref expression) = expression {
-                let mask = row_filter::parallel_predicate_function(&batch, &expression, &metadata.name_to_index)?;
+                let mask = row_filter::build_filter_mask(&batch, expression, &metadata.name_to_index)?;
                 println!("{:?}", mask);
                 batch = arrow2::compute::filter::filter_chunk(&batch, &mask)?;
             }
