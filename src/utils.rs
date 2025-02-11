@@ -6,10 +6,8 @@ use std::{collections::HashMap, error::Error};
 use crate::aggregation::Aggregator;
 use arrow2::array::Array;
 use arrow2::chunk::Chunk;
-use arrow2::datatypes::DataType;
 use arrow2::error::Error as ArrowError;
 use chrono::{NaiveDateTime, TimeZone, Utc};
-use futures::StreamExt;
 use parquet2::metadata::FileMetaData;
 use parquet2::schema::types::PhysicalType;
 use parquet2::statistics::{

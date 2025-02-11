@@ -5,7 +5,7 @@ use parquet2::metadata::RowGroupMetaData;
 use crate::{
     bloom_filter::BloomFilter,
     utils::{self, get_min_max_threshold, Comparison, Expression, ThresholdValue},
-    Mode,
+    Feature,
 };
 
 pub fn keep_row_group(
@@ -13,7 +13,7 @@ pub fn keep_row_group(
     bloom_filters: &Option<Vec<Option<BloomFilter>>>,
     expression: &Expression,
     not: bool,
-    mode: &Mode,
+    features: &Vec<Feature>,
 ) -> Result<bool, Box<dyn Error + Send + Sync>> {
     match expression {
         Expression::Condition(condition) => {
@@ -21,12 +21,10 @@ pub fn keep_row_group(
                 .columns()
                 .iter()
                 .enumerate()
-                .filter_map(|(i, c)| {
-                    match c.descriptor().path_in_schema.first() {
-                        Some(v) => Some((i, c, v)),
-                        None => None,
-                    }})
-                
+                .filter_map(|(i, c)| match c.descriptor().path_in_schema.first() {
+                    Some(v) => Some((i, c, v)),
+                    None => None,
+                })
                 .find(|(_, _, column_name)| *column_name == &condition.column_name)
             {
                 let stats = match column.statistics() {
@@ -38,7 +36,6 @@ pub fn keep_row_group(
                     _ => return Ok(true),
                 };
 
-
                 let mut result = condition.comparison.keep_row_group(
                     &min_value,
                     &max_value,
@@ -46,31 +43,29 @@ pub fn keep_row_group(
                     not,
                 );
 
-                if mode == &Mode::Base || mode == &Mode::Group {
-                    return Ok(result);
-                }
-
-                if !result || condition.comparison != Comparison::Equal {
-                    return Ok(result);
-                }
-
-                let bloom_filter = match bloom_filters {
-                    Some(v) => match v.get(column_index) {
-                        Some(Some(x)) => x,
-                        _ => return Ok(result),
-                    },
-                    _ => return Ok(result),
-                };
-
-                result = match &condition.threshold {
-                    ThresholdValue::Int64(v) => bloom_filter.contains(&v),
-                    ThresholdValue::Boolean(v) => bloom_filter.contains(&v),
-                    ThresholdValue::Utf8String(v) => bloom_filter.contains(&v),
-                    ThresholdValue::Float64(v) => {
-                        let value = *v as i32;
-                        bloom_filter.contains(&value)
+                if features.contains(&Feature::Bloom) {
+                    if !result || condition.comparison != Comparison::Equal {
+                        return Ok(result);
                     }
-                };
+
+                    let bloom_filter = match bloom_filters {
+                        Some(v) => match v.get(column_index) {
+                            Some(Some(x)) => x,
+                            _ => return Ok(result),
+                        },
+                        _ => return Ok(result),
+                    };
+
+                    result = match &condition.threshold {
+                        ThresholdValue::Int64(v) => bloom_filter.contains(&v),
+                        ThresholdValue::Boolean(v) => bloom_filter.contains(&v),
+                        ThresholdValue::Utf8String(v) => bloom_filter.contains(&v),
+                        ThresholdValue::Float64(v) => {
+                            let value = *v as i32;
+                            bloom_filter.contains(&value)
+                        }
+                    };
+                }
 
                 return Ok(result);
             }
@@ -78,25 +73,31 @@ pub fn keep_row_group(
         }
         Expression::And(left, right) => Ok(match not {
             true => {
-                keep_row_group(row_group_metadata, bloom_filters, left, true, mode)?
-                    || keep_row_group(row_group_metadata, bloom_filters, right, true, mode)?
+                keep_row_group(row_group_metadata, bloom_filters, left, true, features)?
+                    || keep_row_group(row_group_metadata, bloom_filters, right, true, features)?
             }
             false => {
-                keep_row_group(row_group_metadata, bloom_filters, left, false, mode)?
-                    && keep_row_group(row_group_metadata, bloom_filters, right, false, mode)?
+                keep_row_group(row_group_metadata, bloom_filters, left, false, features)?
+                    && keep_row_group(row_group_metadata, bloom_filters, right, false, features)?
             }
         }),
         Expression::Or(left, right) => Ok(match not {
             true => {
-                keep_row_group(row_group_metadata, bloom_filters, left, true, mode)?
-                    && keep_row_group(row_group_metadata, bloom_filters, right, true, mode)?
+                keep_row_group(row_group_metadata, bloom_filters, left, true, features)?
+                    && keep_row_group(row_group_metadata, bloom_filters, right, true, features)?
             }
             false => {
-                keep_row_group(row_group_metadata, bloom_filters, left, false, mode)?
-                    || keep_row_group(row_group_metadata, bloom_filters, right, false, mode)?
+                keep_row_group(row_group_metadata, bloom_filters, left, false, features)?
+                    || keep_row_group(row_group_metadata, bloom_filters, right, false, features)?
             }
         }),
-        Expression::Not(inner) => Ok(keep_row_group(row_group_metadata, bloom_filters, inner, !not, mode)?),
+        Expression::Not(inner) => Ok(keep_row_group(
+            row_group_metadata,
+            bloom_filters,
+            inner,
+            !not,
+            features,
+        )?),
     }
 }
 pub fn compare<T: Ord>(min: T, max: T, v: T, comparison: &Comparison, not: bool) -> bool {
@@ -176,18 +177,16 @@ impl Comparison {
                 ThresholdValue::Boolean(min),
                 ThresholdValue::Boolean(max),
                 ThresholdValue::Boolean(v),
-            ) => {
-                match self {
-                    Comparison::LessThan => true,
-                    Comparison::LessThanOrEqual => true,
-                    Comparison::Equal => match not {
-                        false => v == min || v == max,
-                        true => !(v == min && v == max),
-                    },
-                    Comparison::GreaterThanOrEqual => true,
-                    Comparison::GreaterThan => true,
-                }
-            }
+            ) => match self {
+                Comparison::LessThan => true,
+                Comparison::LessThanOrEqual => true,
+                Comparison::Equal => match not {
+                    false => v == min || v == max,
+                    true => !(v == min && v == max),
+                },
+                Comparison::GreaterThanOrEqual => true,
+                Comparison::GreaterThan => true,
+            },
             (
                 ThresholdValue::Utf8String(min),
                 ThresholdValue::Utf8String(max),

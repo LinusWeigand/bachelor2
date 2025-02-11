@@ -1,15 +1,20 @@
+use arrow::{
+    array::{BooleanArray, Date64Array, Float32Array, Int8Array, RecordBatch, StringArray},
+    datatypes::{DataType, Field, Schema},
+};
 use core::f32;
-use arrow::{array::{BooleanArray, Date64Array, Float32Array, Int8Array, RecordBatch, StringArray}, datatypes::{DataType, Field, Schema}};
-use parquet::{arrow::AsyncArrowWriter, basic::Compression, file::properties::{EnabledStatistics, WriterProperties}};
-use tokio::{fs::OpenOptions, io::BufReader};
+use parquet::{
+    arrow::AsyncArrowWriter,
+    basic::Compression,
+    file::properties::{EnabledStatistics, WriterProperties},
+};
 use std::{error::Error, path::PathBuf, sync::Arc};
+use tokio::{fs::OpenOptions, io::BufReader};
 
-use arrow2::{io::parquet::{read::{infer_schema, read_metadata_async}}};
+use arrow2::io::parquet::read::{infer_schema, read_metadata_async};
 
 use query::MetadataItem;
-use tokio::{
-    fs::{File}
-};
+use tokio::fs::File;
 use tokio_util::compat::TokioAsyncReadCompatExt;
 const ROWS_PER_GROUP: usize = 2;
 const INPUT_FILE_PATH: &str = "testing_input.parquet";
@@ -19,12 +24,12 @@ pub mod aggregation;
 pub mod bloom_filter;
 pub mod parse;
 pub mod query;
+pub mod row_filter;
 pub mod row_group_filter;
 pub mod utils;
 
-#[derive(PartialEq)]
-pub enum Mode {
-    Base,
+#[derive(Eq, PartialEq)]
+pub enum Feature {
     Group,
     Bloom,
     Row,
@@ -34,12 +39,18 @@ pub enum Mode {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
-    let aggregation = "SUM(Age)  ,  SUM(Age),  SUM(Float)";
-    let expression = "";
+    let aggregation = "AVG(Age), SUM(Age), MAX(Age), MIN(Age), COUNT(Age), AVG(Float), SUM(Float), MAX(Float), MIN(Float), COUNT(Float)";
+    let expression = " Graduated == true AND Graduated == true";
     // let expression = "Float >= 44.44";
     // let select_columns = "Name";
     let select_columns = "";
-    let mode = Mode::Aggr;
+    let features: Vec<Feature> = vec![
+        Feature::Group,
+        Feature::Bloom,
+        Feature::Row,
+        Feature::Column,
+        Feature::Aggr,
+    ];
     write_example_file().await?;
 
     // Get Metadata
@@ -53,9 +64,11 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     let aggregation = match aggregation {
         "" => None,
-        v => {
-            Some(v.split(",").filter_map(|v| parse::aggregation::parse_aggregation(v.trim()).ok()).collect())
-        },
+        v => Some(
+            v.split(",")
+                .filter_map(|v| parse::aggregation::parse_aggregation(v.trim()).ok())
+                .collect(),
+        ),
     };
     let select_columns = match select_columns {
         "" => {
@@ -87,7 +100,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         expression,
         select_columns,
         aggregation,
-        &mode,
+        &features,
     )
     .await?;
 
@@ -165,5 +178,3 @@ async fn write_example_file() -> Result<(), Box<dyn Error + Send + Sync>> {
     writer.close().await?;
     Ok(())
 }
-
-

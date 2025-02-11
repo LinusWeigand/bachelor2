@@ -1,12 +1,19 @@
 use std::{
-    collections::HashMap, error::Error, path::PathBuf, sync::{atomic::AtomicUsize, Arc}
+    collections::HashMap,
+    error::Error,
+    path::PathBuf,
+    sync::{atomic::AtomicUsize, Arc},
 };
 
-use arrow2::{array::{Array}, chunk::Chunk, datatypes::Schema, io::parquet::read::FileReader};
-use parquet2::metadata::RowGroupMetaData;
 use crate::{
-    aggregation::{build_aggregator, Aggregation, Aggregator, ScalarValue}, row_group_filter::keep_row_group, utils::{self, Expression}, Mode
+    aggregation::{build_aggregator, Aggregation, ScalarValue},
+    row_group_filter::keep_row_group,
+    row_filter,
+    utils::{self, Expression},
+    Feature
 };
+use arrow2::{array::Array, chunk::Chunk, datatypes::{DataType, Schema}, io::parquet::read::FileReader};
+use parquet2::metadata::RowGroupMetaData;
 
 pub struct MetadataItem {
     pub path: PathBuf,
@@ -25,47 +32,57 @@ pub async fn smart_query_parquet(
     expression: Option<Expression>,
     select_columns: Option<Vec<String>>,
     aggregations: Option<Vec<Aggregation>>,
-    mode: &Mode,
-) -> Result<(Vec<Chunk<Box<dyn Array>>>, Arc<AtomicUsize>, Option<AggregationTable>), Box<dyn Error + Send + Sync>> {
+    features: &Vec<Feature>,
+) -> Result<
+    (
+        Vec<Chunk<Box<dyn Array>>>,
+        Arc<AtomicUsize>,
+        Option<AggregationTable>,
+    ),
+    Box<dyn Error + Send + Sync>,
+> {
     let file = std::fs::File::open(&metadata.path)?;
     let bytes_read = Arc::new(AtomicUsize::new(0));
     let counting_file = utils::CountingReader::new(file, bytes_read.clone());
 
     // Row Group Filter
     let mut row_groups = metadata.row_groups;
-    if let Some(expression) = expression {
-        if mode != &Mode::Base {
-            row_groups = row_groups.into_iter().filter_map(|md| {
-                match keep_row_group(&md, &None, &expression, false, mode) {
-                    Ok(false) => None,
-                    Ok(true) | _  => Some(md),
-                }
-            }).collect();
+    if let Some(expression) = &expression {
+        if features.contains(&Feature::Group) {
+            row_groups = row_groups
+                .into_iter()
+                .filter_map(
+                    |md| match keep_row_group(&md, &None, &expression, false, features) {
+                        Ok(false) => None,
+                        Ok(true) | _ => Some(md),
+                    },
+                )
+                .collect();
         }
     }
 
-
-
     // Aggregation
     let mut aggregators = Vec::new();
-    if mode == &Mode::Aggr {
+    if features.contains(&Feature::Aggr) {
         if let Some(aggregations) = aggregations {
             for aggregation in aggregations {
                 let column_name = aggregation.column_name;
                 let aggregation_op = aggregation.aggregation_op;
 
-                println!("Aggregation found");
-                let column = match metadata.schema.fields.iter().find(|field| field.name == column_name) {
+                let column = match metadata
+                    .schema
+                    .fields
+                    .iter()
+                    .find(|field| field.name == column_name)
+                {
                     Some(v) => v,
                     None => continue,
                 };
 
-                println!("Column found");
                 let column_index = match metadata.name_to_index.get(&column_name) {
                     Some(v) => *v,
                     None => continue,
                 };
-                println!("Column index found");
                 let data_type = column.data_type();
                 aggregators.push(build_aggregator(
                     column_index,
@@ -73,13 +90,9 @@ pub async fn smart_query_parquet(
                     aggregation_op,
                     data_type,
                 ));
-                println!("Pushed");
-                println!("Aggregator length: {}", aggregators.len());
             }
         }
     }
-
-    println!("Aggregator length: {}", aggregators.len());
 
     let batch_size = Some(550 * 128);
     let limit = None;
@@ -90,16 +103,30 @@ pub async fn smart_query_parquet(
     // Projection
     if let Some(select_columns) = select_columns {
         schema = schema.filter(|_, field| select_columns.contains(&field.name));
-    } 
+    }
 
-    let reader = FileReader::new(counting_file, row_groups, schema, batch_size, limit, page_indexes);
+    let reader = FileReader::new(
+        counting_file,
+        row_groups,
+        schema,
+        batch_size,
+        limit,
+        page_indexes,
+    );
 
     let mut result = Vec::new();
     for maybe_batch in reader {
-        let batch = match maybe_batch {
+        let mut batch = match maybe_batch {
             Ok(v) => v,
             Err(_) => continue,
         };
+        if features.contains(&Feature::Row) {
+            if let Some(ref expression) = expression {
+                let mask = row_filter::parallel_predicate_function(&batch, &expression, &metadata.name_to_index)?;
+                println!("{:?}", mask);
+                batch = arrow2::compute::filter::filter_chunk(&batch, &mask)?;
+            }
+        }
         utils::aggregate_batch(&mut aggregators, &batch)?;
         result.push(batch);
     }
@@ -125,7 +152,6 @@ pub async fn smart_query_parquet(
                     let array = Arc::new(arrow2::array::Int64Array::from_slice([value]));
                     aggregation_values.push(array);
                     aggregation_names.push(name);
-
                 }
                 ScalarValue::Float64(v) => {
                     let value: f64 = match v.try_into() {
@@ -142,21 +168,41 @@ pub async fn smart_query_parquet(
                     aggregation_values.push(value);
                     aggregation_names.push(name);
                 }
-                _ => return Err("Aggregation Type not supported".into()),
+                ScalarValue::USize(v) => {
+                    let value: i64 = match v.try_into() {
+                        Ok(v) => v,
+                        Err(_) => {
+                            return Err(format!(
+                                "Could not cast aggregation result to Float64: {}",
+                                &name
+                            )
+                            .into())
+                        }
+                    };
+                    let value = Arc::new(arrow2::array::Int64Array::from_slice([value]));
+                    aggregation_values.push(value);
+                    aggregation_names.push(name);
+                }
+                ScalarValue::Null => {
+                    let value = Arc::new(arrow2::array::NullArray::new(DataType::Null, 1));
+                    aggregation_values.push(value);
+                    aggregation_names.push(name);
+                }
+                
+                v => {
+                    println!("Aggregation: {:?}", v);
+                    return Err("Aggregation Type not supported".into());
+                }
             }
-
         }
     }
-    let aggr_table = match mode {
-        Mode::Aggr => {
-            let chunk = Chunk::new(aggregation_values);
-            let names = aggregation_names;
-            Some(AggregationTable { names, chunk })
-        },
-        _ => None
+    let aggr_table = if features.contains(&Feature::Aggr) {
+        let chunk = Chunk::new(aggregation_values);
+        let names = aggregation_names;
+        Some(AggregationTable { names, chunk })
+    } else {
+        None
     };
 
     Ok((result, bytes_read, aggr_table))
 }
-
-

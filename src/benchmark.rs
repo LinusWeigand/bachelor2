@@ -21,12 +21,12 @@ pub mod aggregation;
 pub mod bloom_filter;
 pub mod parse;
 pub mod query;
+pub mod row_filter;
 pub mod row_group_filter;
 pub mod utils;
 
-#[derive(PartialEq)]
-pub enum Mode {
-    Base,
+#[derive(Eq, PartialEq)]
+pub enum Feature {
     Group,
     Bloom,
     Row,
@@ -48,7 +48,7 @@ pub enum Workload {
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     //Arguments
     let args: Vec<String> = env::args().collect();
-    let mut mode = Mode::Base;
+    let mut features = Vec::new();
     let mut workload = Workload::WorstCase;
     let mut iter = args.iter().skip(1);
     let mut max_counts = 10000;
@@ -57,18 +57,18 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         match arg.as_str() {
             "-m" | "--mode" => {
                 if let Some(v) = iter.next() {
-                    mode = match v.as_str() {
-                        "base" => Mode::Base,
-                        "group" => Mode::Group,
-                        "bloom" => Mode::Bloom,
-                        "row" => Mode::Row,
-                        "column" => Mode::Column,
-                        "aggr" => Mode::Aggr,
+                    let new_feature = match v.as_str() {
+                        "group" => Feature::Group,
+                        "bloom" => Feature::Bloom,
+                        "row" => Feature::Row,
+                        "column" => Feature::Column,
+                        "aggr" => Feature::Aggr,
                         _ => {
                             eprintln!("Error: Unknown Mode: {}", v);
                             exit(1);
                         }
                     };
+                    features.push(new_feature);
                 } else {
                     eprintln!("Error: -m/--mode requires an argument.");
                     exit(1);
@@ -121,7 +121,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
             }
         }
     }
-    let mode = Arc::new(mode);
+    let features = Arc::new(features);
     let workload_map = prepare_workload().await?;
     let expression = match workload {
         Workload::WorstCase => workload_map.get(&99),
@@ -168,7 +168,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let queries: Vec<_> = metadata_vec
         .into_iter()
         .map(|metadata| {
-            let mode = Arc::clone(&mode);
+            let mode = Arc::clone(&features);
             let expression = Arc::clone(&expression);
             tokio::spawn(async move {
                 let result = make_query(metadata, &expression, &mode).await;
@@ -209,7 +209,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 async fn make_query(
     metadata: MetadataItem,
     expression: &str,
-    mode: &Mode,
+    features: &Vec<Feature>,
 ) -> Result<Arc<AtomicUsize>, Box<dyn Error + Send + Sync>> {
     let aggregation = Some(vec![parse::aggregation::parse_aggregation("SUM(Age)")?]);
 
@@ -220,8 +220,9 @@ async fn make_query(
     } else {
         Some(parse::expression::parse_expression(expression)?)
     };
-    let (_, bytes_read, aggr_table) =
-        query::smart_query_parquet(metadata, expression, select_columns, aggregation, mode).await?;
+    let (_, bytes_read, _) =
+        query::smart_query_parquet(metadata, expression, select_columns, aggregation, features)
+            .await?;
     Ok(bytes_read)
 }
 
