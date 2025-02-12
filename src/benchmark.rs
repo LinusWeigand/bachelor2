@@ -155,15 +155,19 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     let start = Instant::now();
     let mut paths = Vec::new();
-    println!("Folder?: {:?}", folder_path);
     let mut dir = read_dir(folder_path).await?;
-    println!("Folder found: {:?}", folder_path);
     while let Some(entry) = dir.next_entry().await? {
         if paths.len() >= max_counts {
             break;
         }
         let path = entry.path();
-        println!("Path found: {:?}", path);
+        if let Some(ext) = path.extension() {
+            if let Some(ext) = ext.to_str() {
+                if !ext.contains("merged") {
+                    continue;
+                }
+            }
+        }
         paths.push(path);
     }
 
@@ -239,6 +243,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     );
     println!("+----------------------------------------------+");
     println!("GB read: {:.2}GB", gb);
+    println!("GB scanned: {:.2}GB", max_counts as f64 * 0.851);
     println!("Time taken: {:.2?}", duration.as_millis() as f64 / 1000.);
     println!("+----------------------------------------------+");
     println!("+----------------------------------------------+");
