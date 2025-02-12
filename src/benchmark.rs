@@ -156,6 +156,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let start = Instant::now();
     let mut paths = Vec::new();
     let mut dir = read_dir(folder_path).await?;
+    println!("Folder found: {:?}", folder_path);
     while let Some(entry) = dir.next_entry().await? {
         if paths.len() >= max_counts {
             break;
