@@ -1,4 +1,3 @@
-#![feature(portable_simd)]
 use arrow::{
     array::{BooleanArray, Date64Array, Float32Array, Int8Array, RecordBatch, StringArray},
     datatypes::{DataType, Field, Schema},
