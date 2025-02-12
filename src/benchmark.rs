@@ -161,6 +161,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
             break;
         }
         let path = entry.path();
+        println!("Path found: {:?}", path);
         paths.push(path);
     }
 
