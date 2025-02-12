@@ -9,6 +9,8 @@ use std::{
 
 use arrow2::io::parquet::read::{infer_schema, read_metadata_async};
 
+use futures::stream::{self, StreamExt, TryStreamExt};
+
 use query::MetadataItem;
 use tokio::{
     fs::{read_dir, File},
@@ -53,23 +55,37 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut workload = Workload::WorstCase;
     let mut iter = args.iter().skip(1);
     let mut max_counts = 10000;
-    let mut folder_path = "/mnt/raid0";
+    // let mut folder_path = "/mnt/raid0";
+    let mut folder_path =
+        "/Users/linusweigand/Documents/CodeProjects/rust/Bachelor/row-group-skipper/merged";
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "-m" | "--mode" => {
                 if let Some(v) = iter.next() {
-                    let new_feature = match v.as_str() {
-                        "group" => Feature::Group,
-                        "bloom" => Feature::Bloom,
-                        "row" => Feature::Row,
-                        "column" => Feature::Column,
-                        "aggr" => Feature::Aggr,
+                    match v.as_str() {
+                        "group" => {
+                            features.push(Feature::Group);
+                        }
+                        "row" => {
+                            features.push(Feature::Group);
+                            features.push(Feature::Row);
+                        }
+                        "column" => {
+                            features.push(Feature::Group);
+                            // features.push(Feature::Row);
+                            features.push(Feature::Column);
+                        }
+                        "aggr" => {
+                            features.push(Feature::Group);
+                            features.push(Feature::Row);
+                            features.push(Feature::Column);
+                            features.push(Feature::Aggr);
+                        }
                         _ => {
                             eprintln!("Error: Unknown Mode: {}", v);
                             exit(1);
                         }
                     };
-                    features.push(new_feature);
                 } else {
                     eprintln!("Error: -m/--mode requires an argument.");
                     exit(1);
@@ -94,7 +110,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                     exit(1);
                 }
             }
-            "-c" | "--counter" => {
+            "-c" | "--counts" => {
                 if let Some(v) = iter.next() {
                     max_counts = match v.parse::<usize>() {
                         Ok(x) => x,
@@ -136,43 +152,50 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     // Get Metadata
     println!("Reading Metadata");
-    let mut metadata_vec: Vec<MetadataItem> = Vec::new();
+
+    let start = Instant::now();
+    let mut paths = Vec::new();
     let mut dir = read_dir(folder_path).await?;
-    let mut counter = 0;
     while let Some(entry) = dir.next_entry().await? {
-        let path = entry.path();
-        if !path.is_file() || !path.to_string_lossy().contains("test") {
-            continue;
-        }
-        if counter > max_counts {
+        if paths.len() >= max_counts {
             break;
         }
-        counter += 1;
-        let file = File::open(&path).await?;
+        let path = entry.path();
+        paths.push(path);
+    }
 
+    let metadata_stream = stream::iter(paths.clone()).map(|path| async move {
+        let file = File::open(&path).await?;
         let mut buf_reader = BufReader::new(file).compat();
         let metadata = read_metadata_async(&mut buf_reader).await?;
         let schema = infer_schema(&metadata)?;
-        let name_to_index = utils::get_column_name_to_index(&metadata);
+        let name_to_index = utils::get_column_name_to_index(&schema);
         let row_groups = metadata.row_groups;
-        let metadata = MetadataItem {
+
+        Ok::<_, Box<dyn Error + Send + Sync>>(MetadataItem {
             path,
             schema,
             row_groups,
             name_to_index,
-        };
-        metadata_vec.push(metadata);
-    }
+        })
+    });
 
+    let metadata_vec: Vec<MetadataItem> = metadata_stream
+        .buffer_unordered(paths.len())
+        .try_collect()
+        .await?;
+
+    let duration = start.elapsed();
+    println!("Time taken: {:.2?}", duration.as_millis() as f64 / 1000.);
     println!("Starting benchmark...");
     let start = Instant::now();
     let queries: Vec<_> = metadata_vec
         .into_iter()
         .map(|metadata| {
-            let mode = Arc::clone(&features);
+            let features = Arc::clone(&features);
             let expression = Arc::clone(&expression);
             tokio::spawn(async move {
-                let result = make_query(metadata, &expression, &mode).await;
+                let result = make_query(metadata, &expression, &features).await;
                 result
             })
         })
@@ -181,8 +204,18 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let bytes_read = futures::future::join_all(queries).await;
     let sum = bytes_read
         .into_iter()
-        .filter_map(|result| result.ok())
-        .filter_map(|result| result.ok())
+        .filter_map(|result| {
+            if result.is_err() {
+                println!("Got an error back level 1");
+            }
+            result.ok()
+        })
+        .filter_map(|result| {
+            if result.is_err() {
+                println!("Got an error back level 2");
+            }
+            result.ok()
+        })
         .map(|arc_atomic| arc_atomic.load(std::sync::atomic::Ordering::Relaxed))
         .sum::<usize>();
 
@@ -197,10 +230,13 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         "Disk Throughput: {:.2}MB/s",
         mb / duration.as_millis() as f64 * 1000.
     );
-    println!("Qps: {:.2}", 2002. / duration.as_millis() as f64 * 1000.);
+    println!(
+        "Qps: {:.2}",
+        max_counts as f64 / duration.as_millis() as f64 * 1000.
+    );
     println!("+----------------------------------------------+");
     println!("GB read: {:.2}GB", gb);
-    println!("Time taken: {:.2?}", duration);
+    println!("Time taken: {:.2?}", duration.as_millis() as f64 / 1000.);
     println!("+----------------------------------------------+");
     println!("+----------------------------------------------+");
 
@@ -221,6 +257,8 @@ async fn make_query(
     } else {
         Some(parse::expression::parse_expression(expression)?)
     };
+
+    println!("Expression: {:#?}", expression);
     let (_, bytes_read, _) =
         query::smart_query_parquet(metadata, expression, select_columns, aggregation, features)
             .await?;

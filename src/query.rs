@@ -28,9 +28,9 @@ pub struct AggregationTable {
 }
 
 pub async fn smart_query_parquet(
-    metadata: MetadataItem,
+    mut metadata: MetadataItem,
     expression: Option<Expression>,
-    select_columns: Option<Vec<String>>,
+    mut select_columns: Option<Vec<String>>,
     aggregations: Option<Vec<Aggregation>>,
     features: &Vec<Feature>,
 ) -> Result<
@@ -61,13 +61,46 @@ pub async fn smart_query_parquet(
         }
     }
 
+    
+
+    let batch_size = Some(550 * 128);
+    let limit = None;
+    let page_indexes = None;
+
+    // Early Projection
+    if features.contains(&Feature::Column) {
+        if let Some(select_columns) = &mut select_columns {
+            let filter_col_names = match &expression {
+                Some(v) => utils::get_column_projection_from_expression(&v),
+                None => Vec::new()
+            };
+            for col_name in filter_col_names {
+                if !select_columns.contains(&col_name) {
+                    select_columns.push(col_name);
+                }
+            }
+            if features.contains(&Feature::Aggr) {
+                if let Some(ref aggregations) = aggregations {
+                    let aggr_col_names = utils::get_column_projection_from_aggregations(&aggregations);
+                    for col_name in aggr_col_names {
+                        if !select_columns.contains(&col_name) {
+                            select_columns.push(col_name);
+                        }
+                    }
+                }
+            }
+            metadata.schema = metadata.schema.filter(|_, field| select_columns.contains(&field.name));
+            metadata.name_to_index = utils::get_column_name_to_index(&metadata.schema);
+        }
+    }
+    
     // Aggregation
     let mut aggregators = Vec::new();
     if features.contains(&Feature::Aggr) {
-        if let Some(aggregations) = aggregations {
+        if let Some(aggregations) = &aggregations {
             for aggregation in aggregations {
-                let column_name = aggregation.column_name;
-                let aggregation_op = aggregation.aggregation_op;
+                let column_name = aggregation.column_name.clone();
+                let aggregation_op = aggregation.aggregation_op.clone();
 
                 let column = match metadata
                     .schema
@@ -94,21 +127,11 @@ pub async fn smart_query_parquet(
         }
     }
 
-    let batch_size = Some(550 * 128);
-    let limit = None;
-    let page_indexes = None;
-
-    let mut schema: Schema = metadata.schema;
-
-    // Projection
-    if let Some(select_columns) = select_columns {
-        schema = schema.filter(|_, field| select_columns.contains(&field.name));
-    }
 
     let reader = FileReader::new(
         counting_file,
         row_groups,
-        schema,
+        metadata.schema.clone(),
         batch_size,
         limit,
         page_indexes,
@@ -120,16 +143,33 @@ pub async fn smart_query_parquet(
             Ok(v) => v,
             Err(_) => continue,
         };
+
         if features.contains(&Feature::Row) {
-            if let Some(ref expression) = expression {
+            if let Some(expression) = &expression {
                 let mask = row_filter::build_filter_mask(&batch, expression, &metadata.name_to_index)?;
-                println!("{:?}", mask);
                 batch = arrow2::compute::filter::filter_chunk(&batch, &mask)?;
             }
         }
+
         utils::aggregate_batch(&mut aggregators, &batch)?;
+        if features.contains(&Feature::Column) {
+            if let Some(select_columns) = &select_columns {
+                if select_columns.len() < metadata.schema.fields.len() {
+                    let selected_indices: Vec<usize> = metadata.schema.fields.iter().enumerate().filter_map(|(i, field)| {
+                        match select_columns.contains(&field.name) {
+                            false => None,
+                            true => Some(i)
+                        }}).collect();
+                    batch = utils::filter_columns(&batch, &selected_indices);
+
+                    metadata.schema = metadata.schema.filter(|_, field| select_columns.contains(&field.name));
+                    metadata.name_to_index = utils::get_column_name_to_index(&metadata.schema);
+                }
+            }
+        }
         result.push(batch);
     }
+
 
     let mut aggregation_values: Vec<Arc<dyn Array>> = Vec::new();
     let mut aggregation_names: Vec<String> = Vec::new();
@@ -196,6 +236,7 @@ pub async fn smart_query_parquet(
             }
         }
     }
+
     let aggr_table = if features.contains(&Feature::Aggr) {
         let chunk = Chunk::new(aggregation_values);
         let names = aggregation_names;

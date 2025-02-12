@@ -26,10 +26,7 @@ pub enum ScalarValue {
 }
 
 pub trait Aggregator: Send + Sync {
-    fn aggregate_batch(
-        &mut self,
-        batch: &Chunk<Box<dyn Array>>,
-    ) -> Result<(), ArrowError>;
+    fn aggregate_batch(&mut self, batch: &Chunk<Box<dyn Array>>) -> Result<(), ArrowError>;
     fn get_result(&self) -> ScalarValue;
     fn get_name(&self) -> String;
 }
@@ -43,7 +40,7 @@ pub enum AggregationOp {
     MAX,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Aggregation {
     pub column_name: String,
     pub aggregation_op: AggregationOp,
@@ -182,10 +179,7 @@ impl<T> Aggregator for IntegerAggregator<T>
 where
     T: NativeType + Into<i64>,
 {
-    fn aggregate_batch(
-        &mut self,
-        batch: &Chunk<Box<dyn Array>>,
-    ) -> Result<(), ArrowError> {
+    fn aggregate_batch(&mut self, batch: &Chunk<Box<dyn Array>>) -> Result<(), ArrowError> {
         let column = batch.columns().get(self.column_index).ok_or_else(|| {
             ArrowError::InvalidArgumentError(format!(
                 "Column index {} out of bounds",
@@ -297,10 +291,7 @@ impl<T> Aggregator for UIntegerAggregator<T>
 where
     T: NativeType + Into<u64>,
 {
-    fn aggregate_batch(
-        &mut self,
-        batch: &Chunk<Box<dyn Array>>,
-    ) -> Result<(), ArrowError> {
+    fn aggregate_batch(&mut self, batch: &Chunk<Box<dyn Array>>) -> Result<(), ArrowError> {
         let column = batch.columns().get(self.column_index).ok_or_else(|| {
             ArrowError::InvalidArgumentError(format!(
                 "Column index {} out of bounds",

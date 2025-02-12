@@ -41,14 +41,15 @@ pub enum Feature {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let aggregation = "AVG(Age), SUM(Age), MAX(Age), MIN(Age), COUNT(Age), AVG(Float), SUM(Float), MAX(Float), MIN(Float), COUNT(Float)";
-    // let expression = " Age > 10";
-    let expression = "Birthday >= 1020-1-1-1:1:1";
+    let expression = " Age < 10";
+    // let expression = "";
+    // let expression = "Birthday >= 1020-1-1-1:1:1";
     // let select_columns = "Name";
-    let select_columns = "";
+    let select_columns = "Age";
     let features: Vec<Feature> = vec![
         Feature::Group,
-        Feature::Bloom,
-        Feature::Row,
+        // Feature::Bloom,
+        // Feature::Row,
         Feature::Column,
         Feature::Aggr,
     ];
@@ -60,7 +61,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut buf_reader = BufReader::new(file).compat();
     let metadata = read_metadata_async(&mut buf_reader).await?;
     let schema = infer_schema(&metadata)?;
-    let name_to_index = utils::get_column_name_to_index(&metadata);
+    let name_to_index = utils::get_column_name_to_index(&schema);
     let columns_to_print;
 
     let aggregation = match aggregation {

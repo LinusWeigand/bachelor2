@@ -3,9 +3,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::{collections::HashMap, error::Error};
 
-use crate::aggregation::Aggregator;
+use crate::aggregation::{Aggregation, Aggregator};
 use arrow2::array::Array;
 use arrow2::chunk::Chunk;
+use arrow2::datatypes::Schema;
 use arrow2::error::Error as ArrowError;
 use chrono::{NaiveDateTime, TimeZone, Utc};
 use parquet2::metadata::FileMetaData;
@@ -29,7 +30,7 @@ pub enum ThresholdValue {
     Utf8String(String),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Expression {
     Condition(Condition),
     And(Box<Expression>, Box<Expression>),
@@ -140,6 +141,17 @@ pub fn bytes_to_value(
     }
 }
 
+pub fn get_column_projection_from_aggregations(aggregations: &Vec<Aggregation>) -> Vec<String> {
+    let mut result: Vec<String> = Vec::new();
+    for aggregation in aggregations {
+        let col_name = &aggregation.column_name;
+        if result.contains(&col_name) {
+            result.push(col_name.to_owned());
+        }
+    }
+    result
+}
+
 pub fn get_column_projection_from_expression(expression: &Expression) -> Vec<String> {
     let mut column_projection = Vec::new();
 
@@ -162,16 +174,12 @@ pub fn get_column_projection_from_expression(expression: &Expression) -> Vec<Str
     column_projection
 }
 
-pub fn get_column_name_to_index(metadata: &FileMetaData) -> HashMap<String, usize> {
-    metadata
-        .schema()
-        .columns()
+pub fn get_column_name_to_index(schema: &Schema) -> HashMap<String, usize> {
+        schema
+        .fields
         .iter()
         .enumerate()
-        .filter_map(|(i, column)| match column.path_in_schema.last() {
-            Some(v) => Some((v.to_owned(), i)),
-            None => None,
-        })
+        .map(|(i, field)| (field.name.clone(), i))
         .collect()
 }
 
@@ -353,4 +361,14 @@ pub fn aggregate_chunks(
     }
 
     Some(Chunk::new(concatenated_columns))
+}
+
+
+pub fn filter_columns(batch: &Chunk<Box<dyn Array>>, selected_indices: &[usize]) -> Chunk<Box<dyn Array>> {
+    let filtered_columns: Vec<_> = selected_indices
+        .iter()
+        .filter_map(|&index| batch.columns().get(index).cloned())
+        .collect();
+
+    Chunk::new(filtered_columns)
 }

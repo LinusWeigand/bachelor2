@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.95"
 arrow = { version = "54.0.0", features = ["prettyprint"] }
-arrow2 = { version = "0.18.0", features = ["compute_concatenate", "compute_filter", "io_parquet", "io_print", "serde_types"] }
+arrow2 = { version = "0.18.0", features = ["compute_boolean", "compute_cast", "compute_comparison", "compute_concatenate", "compute_filter", "io_parquet", "io_print", "serde_types"] }
 # arrow2 = { path = "/Users/linusweigand/Downloads/arrow2", features = ["io_parquet", "serde_types", "io_parquet_async", "io_print", "compute_concatenate"] }
 # parquet2 = { path = "/Users/linusweigand/Downloads/parquet2", features = ["serde_types"]}
 async-stream = "0.3.6"
@@ -33,9 +33,9 @@ tokio-util = { version = "0.7.13", features = ["compat", "io-util"] }
 name = "benchmark"
 path = "src/benchmark.rs"
 
-# [[bin]]
-# name = "merge"
-# path = "src/metadata/merge.rs"
+[[bin]]
+name = "merge"
+path = "src/metadata/merge.rs"
 #
 # [[bin]]
 # name = "selectivity"
