@@ -53,7 +53,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut workload = Workload::WorstCase;
     let mut iter = args.iter().skip(1);
     let mut max_counts = 10000;
-    let mut folder_path = "/mnt/raid0";
+    let mut folder_path = "merged";
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "-m" | "--mode" => {
@@ -141,9 +141,6 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut counter = 0;
     while let Some(entry) = dir.next_entry().await? {
         let path = entry.path();
-        if !path.is_file() || !path.to_string_lossy().contains("test") {
-            continue;
-        }
         if counter > max_counts {
             break;
         }
