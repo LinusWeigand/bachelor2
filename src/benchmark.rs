@@ -137,6 +137,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
             }
         }
     }
+    println!("Folder Path: {}", folder_path);
     let features = Arc::new(features);
     let workload_map = prepare_workload().await?;
     let expression = match workload {
