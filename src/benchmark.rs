@@ -72,7 +72,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                         }
                         "column" => {
                             features.push(Feature::Group);
-                            // features.push(Feature::Row);
+                            features.push(Feature::Row);
                             features.push(Feature::Column);
                         }
                         "aggr" => {
@@ -258,7 +258,6 @@ async fn make_query(
         Some(parse::expression::parse_expression(expression)?)
     };
 
-    println!("Expression: {:#?}", expression);
     let (_, bytes_read, _) =
         query::smart_query_parquet(metadata, expression, select_columns, aggregation, features)
             .await?;

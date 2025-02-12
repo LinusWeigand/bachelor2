@@ -155,7 +155,6 @@ pub async fn smart_query_parquet(
         // Late Projection
         if features.contains(&Feature::Column) {
             if let Some(select_columns) = &select_columns {
-                println!("select_columns: {:?}", select_columns);
                 if select_columns.len() < metadata.schema.fields.len() {
                     let selected_indices: Vec<usize> = metadata.schema.fields.iter().enumerate().filter_map(|(i, field)| {
                         match select_columns.contains(&field.name) {
