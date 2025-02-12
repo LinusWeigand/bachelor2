@@ -145,7 +145,7 @@ pub fn get_column_projection_from_aggregations(aggregations: &Vec<Aggregation>) 
     let mut result: Vec<String> = Vec::new();
     for aggregation in aggregations {
         let col_name = &aggregation.column_name;
-        if result.contains(&col_name) {
+        if !result.contains(&col_name) {
             result.push(col_name.to_owned());
         }
     }

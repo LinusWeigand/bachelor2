@@ -40,16 +40,16 @@ pub enum Feature {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
-    let aggregation = "AVG(Age), SUM(Age), MAX(Age), MIN(Age), COUNT(Age), AVG(Float), SUM(Float), MAX(Float), MIN(Float), COUNT(Float)";
-    let expression = " Age < 10";
-    // let expression = "";
+    let aggregation = "AVG(Age), SUM(Birthday), MAX(Age), MIN(Age), COUNT(Age), AVG(Float), SUM(Float), MAX(Float), MIN(Float), COUNT(Float)";
+    // let expression = " Age < 10";
+    let expression = "";
     // let expression = "Birthday >= 1020-1-1-1:1:1";
     // let select_columns = "Name";
     let select_columns = "Age";
     let features: Vec<Feature> = vec![
         Feature::Group,
-        // Feature::Bloom,
-        // Feature::Row,
+        Feature::Bloom,
+        Feature::Row,
         Feature::Column,
         Feature::Aggr,
     ];
@@ -79,7 +79,11 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         }
         v => {
             let projection: Vec<String> = v.split(",").map(|v| v.to_owned()).collect();
-            columns_to_print = projection.clone();
+            columns_to_print = if features.contains(&Feature::Column) {
+                projection.clone()
+            } else {
+                utils::get_column_names(&metadata)
+            };
             Some(projection)
         }
     };

@@ -30,7 +30,7 @@ pub struct AggregationTable {
 pub async fn smart_query_parquet(
     mut metadata: MetadataItem,
     expression: Option<Expression>,
-    mut select_columns: Option<Vec<String>>,
+    select_columns: Option<Vec<String>>,
     aggregations: Option<Vec<Aggregation>>,
     features: &Vec<Feature>,
 ) -> Result<
@@ -69,27 +69,27 @@ pub async fn smart_query_parquet(
 
     // Early Projection
     if features.contains(&Feature::Column) {
-        if let Some(select_columns) = &mut select_columns {
+        if let Some(mut early_select) = select_columns.clone() {
             let filter_col_names = match &expression {
                 Some(v) => utils::get_column_projection_from_expression(&v),
                 None => Vec::new()
             };
             for col_name in filter_col_names {
-                if !select_columns.contains(&col_name) {
-                    select_columns.push(col_name);
+                if !early_select.contains(&col_name) {
+                    early_select.push(col_name);
                 }
             }
             if features.contains(&Feature::Aggr) {
                 if let Some(ref aggregations) = aggregations {
                     let aggr_col_names = utils::get_column_projection_from_aggregations(&aggregations);
                     for col_name in aggr_col_names {
-                        if !select_columns.contains(&col_name) {
-                            select_columns.push(col_name);
+                        if !early_select.contains(&col_name) {
+                            early_select.push(col_name);
                         }
                     }
                 }
             }
-            metadata.schema = metadata.schema.filter(|_, field| select_columns.contains(&field.name));
+            metadata.schema = metadata.schema.filter(|_, field| early_select.contains(&field.name));
             metadata.name_to_index = utils::get_column_name_to_index(&metadata.schema);
         }
     }
@@ -152,8 +152,10 @@ pub async fn smart_query_parquet(
         }
 
         utils::aggregate_batch(&mut aggregators, &batch)?;
+        // Late Projection
         if features.contains(&Feature::Column) {
             if let Some(select_columns) = &select_columns {
+                println!("select_columns: {:?}", select_columns);
                 if select_columns.len() < metadata.schema.fields.len() {
                     let selected_indices: Vec<usize> = metadata.schema.fields.iter().enumerate().filter_map(|(i, field)| {
                         match select_columns.contains(&field.name) {
