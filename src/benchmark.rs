@@ -161,13 +161,6 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
             break;
         }
         let path = entry.path();
-        if let Some(ext) = path.extension() {
-            if let Some(ext) = ext.to_str() {
-                if !ext.contains("merged") {
-                    continue;
-                }
-            }
-        }
         paths.push(path);
     }
 
