@@ -186,7 +186,10 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         "Disk Throughput: {:.2}MB/s",
         mb / duration.as_millis() as f64 * 1000.
     );
-    println!("Qps: {:.2}", 2002. / duration.as_millis() as f64 * 1000.);
+    println!(
+        "Qps: {:.2}",
+        max_counts as f64 / duration.as_millis() as f64 * 1000.
+    );
     println!("+----------------------------------------------+");
     println!("GB read: {:.2}GB", gb);
     println!("Time taken: {:.2?}", duration);
