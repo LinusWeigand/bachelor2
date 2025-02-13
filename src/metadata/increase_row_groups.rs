@@ -41,7 +41,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             None => continue,
         };
 
-        if stem.to_string_lossy().contains("test") {
+        if stem.to_string_lossy().contains("uncomp") {
             continue;
         }
 
@@ -49,7 +49,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         println!("Progress: {:.2}%", progress as f64 / 2002. * 100.);
 
         let file_name = format!(
-            "{}.test.{}",
+            "{}.uncomp.{}",
             stem.to_string_lossy(),
             extension.to_string_lossy()
         );
@@ -88,7 +88,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let record_batch = record_batch.unwrap();
 
         let props = WriterProperties::builder()
-            .set_compression(Compression::SNAPPY)
+            .set_compression(Compression::UNCOMPRESSED)
             .set_max_row_group_size(ROWS_PER_GROUP)
             .set_statistics_enabled(EnabledStatistics::Chunk)
             .build();

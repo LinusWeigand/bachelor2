@@ -53,7 +53,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             continue;
         }
 
-        let output_file_name = format!("merged_{:02}.parquet", chunk_index + 1);
+        let output_file_name = format!("merged_uncomp{:02}.parquet", chunk_index + 1);
         let output_file_path = format!("{}/{}", INPUT_FOLDER_PATH, output_file_name);
 
         // We'll create our AsyncArrowWriter once we know the schema,
@@ -96,7 +96,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
                     // Configure writer properties
                     let props = WriterProperties::builder()
-                        .set_compression(Compression::SNAPPY)
+                        .set_compression(Compression::UNCOMPRESSED)
                         .set_max_row_group_size(ROWS_PER_GROUP)
                         .set_statistics_enabled(EnabledStatistics::Chunk)
                         .set_dictionary_enabled(false)
