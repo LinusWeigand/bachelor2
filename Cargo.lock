@@ -322,6 +322,8 @@ dependencies = [
  "num-traits",
  "parquet2",
  "rustc_version",
+ "serde",
+ "serde_derive",
  "simdutf8",
  "streaming-iterator",
 ]
@@ -1234,6 +1236,7 @@ dependencies = [
  "lz4",
  "parquet-format-safe",
  "seq-macro",
+ "serde",
  "snap",
  "streaming-decompression",
  "xxhash-rust",
