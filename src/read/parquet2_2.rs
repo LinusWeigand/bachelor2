@@ -145,7 +145,7 @@ async fn make_query(
     read_size: usize,
 ) -> Result<Arc<AtomicUsize>, Box<dyn Error + Send + Sync>> {
     // Query
-    let expression = parse_expression("memoryUsed > 16685759632")?;
+    let expression = parse_expression("memoryUsed > 97525233984")?;
     let select_columns = vec!["memoryUsed".to_owned()];
 
     let metadata = parse_raw_footer(&raw_footer.raw_bytes, raw_footer.footer_size)?;
