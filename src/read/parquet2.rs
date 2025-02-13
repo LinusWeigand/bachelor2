@@ -141,15 +141,18 @@ async fn get_next_item_from_reader(
 async fn load_files(
     file_paths: Vec<String>,
 ) -> Result<Vec<(String, arrow2::io::parquet::read::FileMetaData)>, Box<dyn Error + Send + Sync>> {
-    let result = futures::stream::iter(file_paths.into_iter().map(|path| async move {
-        let file = File::open(&path).await?;
-        let mut buf_reader = BufReader::new(file).compat();
-        let metadata = read_metadata_async(&mut buf_reader).await?;
-        Ok::<_, Box<dyn Error + Send + Sync>>((path, metadata))
+    let results = futures::stream::iter(file_paths.into_iter().map(|path| {
+        tokio::spawn(async move {
+            let file = File::open(&path).await?;
+            let mut buf_reader = BufReader::new(file).compat();
+            let metadata = read_metadata_async(&mut buf_reader).await?;
+            Ok::<_, Box<dyn Error + Send + Sync>>((path, metadata))
+        })
     }))
     .buffer_unordered(10)
+    .then(|res| async move { res.unwrap_or_else(|e| Err(Box::new(e) as Box<dyn Error + Send + Sync>)) })
     .try_collect::<Vec<_>>()
     .await?;
 
-    Ok(result)
+    Ok(results)
 }
