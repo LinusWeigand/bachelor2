@@ -29,13 +29,13 @@ tokio-util = { version = "0.7.13", features = ["compat", "io-util"] }
 # name = "main"
 # path = "src/main.rs"
 
-[[bin]]
-name = "benchmark"
-path = "src/benchmark.rs"
+# [[bin]]
+# name = "benchmark"
+# path = "src/benchmark.rs"
 
-[[bin]]
-name = "merge"
-path = "src/metadata/merge.rs"
+# [[bin]]
+# name = "merge"
+# path = "src/metadata/merge.rs"
 #
 # [[bin]]
 # name = "selectivity"
@@ -49,9 +49,9 @@ path = "src/metadata/merge.rs"
 # name = "increase"
 # path = "src/metadata/increase_row_groups.rs"
 
-[[bin]]
-name = "testing"
-path = "src/testing.rs"
+# [[bin]]
+# name = "testing"
+# path = "src/testing.rs"
 
 # [[bin]]
 # name = "read"
@@ -104,3 +104,7 @@ path = "src/testing.rs"
 # [[bin]]
 # name = "parquet"
 # path = "src/read/parquet.rs"
+
+[[bin]]
+name = "parquet2_2"
+path = "src/read/parquet2_2.rs"
