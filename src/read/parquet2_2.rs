@@ -132,8 +132,8 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let size = 0.858 * std::cmp::min(count, FILE_PATHS.len()) as f64;
     let seconds = elapsed.as_millis() as f64 / 1000.;
     let tp = size / seconds;
-    println!("Time: {:.2}", seconds);
-    println!("Throughput: {:02}", tp);
+    println!("Time: {:.2}s", seconds);
+    println!("Throughput: {:02}MB", tp);
 
     Ok(())
 }
