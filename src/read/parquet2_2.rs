@@ -194,8 +194,8 @@ async fn make_query(
     );
     for maybe_batch in reader {
         let mut batch = maybe_batch?;
-        let mask = build_filter_mask(&batch, &expression, &name_to_index)?;
-        batch = arrow2::compute::filter::filter_chunk(&batch, &mask)?;
+        // let mask = build_filter_mask(&batch, &expression, &name_to_index)?;
+        // batch = arrow2::compute::filter::filter_chunk(&batch, &mask)?;
 
         // Late Projection
         // if select_columns.len() < schema.fields.len() {
