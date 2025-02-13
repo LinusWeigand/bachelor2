@@ -103,3 +103,7 @@ path = "src/read/parquet2.rs"
 # [[bin]]
 # name = "direct"
 # path = "src/read/direct.rs"
+
+[features]
+dhat-heap = []
+dhat-ad-hoc = [] 

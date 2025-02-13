@@ -1,17 +1,16 @@
-use arrow::array::RecordBatch;
 use arrow2::datatypes::Schema;
 use arrow2::io::parquet::read::{infer_schema, read_metadata_async, FileReader};
 use futures::stream::{StreamExt, TryStreamExt};
-use parquet::arrow::async_reader::ParquetRecordBatchStream;
 use std::env;
 use std::error::Error;
-use std::pin::Pin;
 use std::process::exit;
 use tokio::fs::File;
 use tokio::io::BufReader;
 use tokio::time::Instant;
 use tokio_util::compat::TokioAsyncReadCompatExt;
 
+
+#[cfg(feature = "dhat-heap")]
 #[global_allocator]
 static ALLOC: dhat::Alloc = dhat::Alloc;
 
@@ -35,6 +34,7 @@ const FILE_PATHS: [&str; 16] = [
 ];
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
+    #[cfg(feature = "dhat-heap")]
     let _profiler = dhat::Profiler::new_heap();
     let args: Vec<String> = env::args().collect();
     let mut iter = args.iter().skip(1);
