@@ -112,7 +112,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     }
 
     let elapsed = start_time.elapsed();
-    let size = 0.864 * count as f64;
+    let size = 0.858 * std::cmp::min(count, FILE_PATHS.len()) as f64;
     let seconds = elapsed.as_millis() as f64 / 1000.;
     let tp = size / seconds;
     println!("Time: {}", seconds);

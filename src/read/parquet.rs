@@ -10,7 +10,7 @@ use parquet::arrow::ParquetRecordBatchStreamBuilder;
 use tokio::fs::File;
 use tokio::time::Instant;
 
-const FILE_PATHS: [&str; 8] = [
+const FILE_PATHS: [&str; 16] = [
     "merged_01.parquet",
     "merged_02.parquet",
     "merged_03.parquet",
@@ -19,14 +19,14 @@ const FILE_PATHS: [&str; 8] = [
     "merged_06.parquet",
     "merged_07.parquet",
     "merged_08.parquet",
-    // "merged_09.parquet",
-    // "merged_10.parquet",
-    // "merged_11.parquet",
-    // "merged_12.parquet",
-    // "merged_13.parquet",
-    // "merged_14.parquet",
-    // "merged_15.parquet",
-    // "merged_16.parquet",
+    "merged_09.parquet",
+    "merged_10.parquet",
+    "merged_11.parquet",
+    "merged_12.parquet",
+    "merged_13.parquet",
+    "merged_14.parquet",
+    "merged_15.parquet",
+    "merged_16.parquet",
 ];
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>>{
@@ -95,7 +95,7 @@ async fn main() -> Result<(), Box<dyn Error>>{
     }
 
     let elapsed = start_time.elapsed();
-    let size = 0.864 * 8.;
+    let size = 0.858 * FILE_PATHS.len();
     let seconds = elapsed.as_millis() as f64 / 1000.;
     let tp = size / seconds;
     println!("Time: {}", seconds);

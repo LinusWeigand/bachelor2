@@ -16,6 +16,9 @@ use tokio::{
 };
 const ROWS_PER_GROUP: usize = 2;
 
+// #[global_allocator]
+// static ALLOC: dhat::DhatAlloc = dhat::DhatAlloc;
+
 pub mod aggregation;
 pub mod bloom_filter;
 pub mod more_row_groups;
@@ -47,6 +50,7 @@ pub enum Workload {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
+    // let _dhat = dhat::Dhat::start_heap();
     //Arguments
     let args: Vec<String> = env::args().collect();
     let mut mode = Mode::Base;
