@@ -80,6 +80,10 @@ path = "src/metadata/metadata.rs"
 name = "parquet2"
 path = "src/read/parquet2.rs"
 
+[[bin]]
+name = "parquet2_2"
+path = "src/read/parquet2_2.rs"
+
 # [[bin]]
 # name = "parquet"
 # path = "src/read/parquet.rs"
