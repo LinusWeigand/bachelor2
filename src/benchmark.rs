@@ -154,7 +154,9 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
             break;
         }
         let path = entry.path();
-        file_paths.push(path);
+        if path.extension().and_then(std::ffi::OsStr::to_str) == Some("parquet") {
+            file_paths.push(path);
+        }
     }
 
     let raw_footers = utils::load_raw_footers(file_paths).await?;
