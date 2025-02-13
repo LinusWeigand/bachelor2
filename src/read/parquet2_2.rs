@@ -142,10 +142,11 @@ async fn make_query(
 ) -> Result<Arc<AtomicUsize>, Box<dyn Error + Send + Sync>> {
     // Query
     let expression = parse_expression("memoryUsed > 16685759632")?;
+    let select_columns = vec!["memoryUsed".to_owned()];
 
     let metadata = parse_raw_footer(&raw_footer.raw_bytes, raw_footer.footer_size)?;
-    let schema = infer_schema(&metadata)?;
-    let name_to_index = get_column_name_to_index(&schema);
+    let mut schema = infer_schema(&metadata)?;
+    let mut name_to_index = get_column_name_to_index(&schema);
     let row_groups = metadata.row_groups;
     let path = raw_footer.path;
 
@@ -153,6 +154,15 @@ async fn make_query(
     let bytes_read = Arc::new(AtomicUsize::new(0));
     let counting_file = CountingReader::new(file, bytes_read.clone());
 
+    let mut early_select = select_columns.clone();
+    let filter_col_names = get_column_projection_from_expression(&expression);
+    for col_name in filter_col_names {
+        if !early_select.contains(&col_name) {
+            early_select.push(col_name);
+        }
+    }
+    schema = schema.filter(|_, field| early_select.contains(&field.name));
+    name_to_index = get_column_name_to_index(&schema);
     // Row Group Filter
     let mut row_groups = row_groups;
     row_groups = row_groups
@@ -169,7 +179,7 @@ async fn make_query(
     let reader = FileReader::new(
         counting_file,
         row_groups,
-        schema,
+        schema.clone(),
         Some(read_size),
         None,
         None,
@@ -178,6 +188,18 @@ async fn make_query(
         let mut batch = maybe_batch?;
         let mask = build_filter_mask(&batch, &expression, &name_to_index)?;
         batch = arrow2::compute::filter::filter_chunk(&batch, &mask)?;
+
+        // Late Projection
+        if select_columns.len() < schema.fields.len() {
+            let selected_indices: Vec<usize> = schema.fields.iter().enumerate().filter_map(|(i, field)| {
+
+            match select_columns.contains(&field.name) {
+                false => None,
+                true => Some(i)
+            }}).collect();
+            batch = filter_columns(&batch, &selected_indices);
+        }
+
     }
 
     Ok(bytes_read)
@@ -1047,4 +1069,37 @@ pub fn build_filter_mask(
 
 fn downcast_err(t: &str) -> ArrowError {
     ArrowError::InvalidArgumentError(format!("Could not downcast array to {}", t))
+}
+pub fn get_column_projection_from_expression(expression: &Expression) -> Vec<String> {
+    let mut column_projection = Vec::new();
+
+    fn get_column_projection(expr: &Expression, cols: &mut Vec<String>) {
+        match expr {
+            Expression::Condition(cond) => {
+                if !cols.contains(&cond.column_name) {
+                    cols.push(cond.column_name.clone());
+                }
+            }
+            Expression::And(left, right) | Expression::Or(left, right) => {
+                get_column_projection(left, cols);
+                get_column_projection(right, cols);
+            }
+            Expression::Not(inner) => get_column_projection(inner, cols),
+        }
+    }
+
+    get_column_projection(expression, &mut column_projection);
+    column_projection
+}
+
+pub fn filter_columns(
+    batch: &Chunk<Box<dyn Array>>,
+    selected_indices: &[usize],
+) -> Chunk<Box<dyn Array>> {
+    let filtered_columns: Vec<_> = selected_indices
+        .iter()
+        .filter_map(|&index| batch.columns().get(index).cloned())
+        .collect();
+
+    Chunk::new(filtered_columns)
 }
