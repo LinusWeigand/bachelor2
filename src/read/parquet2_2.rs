@@ -161,7 +161,10 @@ async fn make_query(
             early_select.push(col_name);
         }
     }
+    let num_fields_before = &schema.fields.len();
     schema = schema.filter(|_, field| early_select.contains(&field.name));
+    let num_fields_after = &schema.fields.len();
+    println!("Before: {}, After {}", num_fields_before, num_fields_after);
     name_to_index = get_column_name_to_index(&schema);
     // Row Group Filter
     let mut row_groups = row_groups;
