@@ -12,6 +12,9 @@ use tokio::io::BufReader;
 use tokio::time::Instant;
 use tokio_util::compat::TokioAsyncReadCompatExt;
 
+#[global_allocator]
+static ALLOC: dhat::Alloc = dhat::Alloc;
+
 const FILE_PATHS: [&str; 16] = [
     "merged_01.parquet",
     "merged_02.parquet",
@@ -32,6 +35,7 @@ const FILE_PATHS: [&str; 16] = [
 ];
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
+    let _profiler = dhat::Profiler::new_heap();
     let args: Vec<String> = env::args().collect();
     let mut iter = args.iter().skip(1);
 

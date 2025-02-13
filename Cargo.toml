@@ -20,85 +20,86 @@ serde = { version = "1.0.217", features = ["derive"] }
 tokio = { version = "1.43.0", features = ["full"] }
 tokio-util = { version = "0.7.13", features = ["compat", "io-util"] }
 
-# [profile.release]
-# debug = true
 
-[[bin]]
-name = "main"
-path = "src/main.rs"
+[profile.release]
+debug = 1
 
-[[bin]]
-name = "benchmark"
-path = "src/benchmark.rs"
+# [[bin]]
+# name = "main"
+# path = "src/main.rs"
 
-[[bin]]
-name = "merge"
-path = "src/metadata/merge.rs"
-
-[[bin]]
-name = "selectivity"
-path = "src/metadata/selectivity.rs"
+# [[bin]]
+# name = "benchmark"
+# path = "src/benchmark.rs"
+#
+# [[bin]]
+# name = "merge"
+# path = "src/metadata/merge.rs"
+#
+# [[bin]]
+# name = "selectivity"
+# path = "src/metadata/selectivity.rs"
 
 # [[bin]]
 # name = "metadata"
 # path = "src/metadata/metadata.rs"
 
-[[bin]]
-name = "increase"
-path = "src/metadata/increase_row_groups.rs"
-
-[[bin]]
-name = "testing"
-path = "src/testing.rs"
-
-[[bin]]
-name = "read"
-path = "src/read/read.rs"
-
-[[bin]]
-name = "seqread"
-path = "src/read/seq_read.rs"
-
-[[bin]]
-name = "wrapper"
-path = "src/read/wrapper.rs"
-
-[[bin]]
-name = "memmap"
-path = "src/read/mem_map.rs"
-
-[[bin]]
-name = "version2"
-path = "src/read/version2.rs"
-
-[[bin]]
-name = "version3"
-path = "src/read/version3.rs"
-
+# [[bin]]
+# name = "increase"
+# path = "src/metadata/increase_row_groups.rs"
+#
+# [[bin]]
+# name = "testing"
+# path = "src/testing.rs"
+#
+# [[bin]]
+# name = "read"
+# path = "src/read/read.rs"
+#
+# [[bin]]
+# name = "seqread"
+# path = "src/read/seq_read.rs"
+#
+# [[bin]]
+# name = "wrapper"
+# path = "src/read/wrapper.rs"
+#
+# [[bin]]
+# name = "memmap"
+# path = "src/read/mem_map.rs"
+#
+# [[bin]]
+# name = "version2"
+# path = "src/read/version2.rs"
+#
+# [[bin]]
+# name = "version3"
+# path = "src/read/version3.rs"
+#
 [[bin]]
 name = "parquet2"
 path = "src/read/parquet2.rs"
 
-[[bin]]
-name = "parquet"
-path = "src/read/parquet.rs"
-
-[[bin]]
-name = "seqread2"
-path = "src/read/seqread2.rs"
+# [[bin]]
+# name = "parquet"
+# path = "src/read/parquet.rs"
 
 # [[bin]]
-# name = "seqread3"
-# path = "src/read/seqread3.rs"
-
-[[bin]]
-name = "bufreader"
-path = "src/read/buf_reader.rs"
-
-[[bin]]
-name = "memmap2"
-path = "src/read/mem_map2.rs"
-
-[[bin]]
-name = "direct"
-path = "src/read/direct.rs"
+# name = "seqread2"
+# path = "src/read/seqread2.rs"
+#
+# # [[bin]]
+# # name = "seqread3"
+# # path = "src/read/seqread3.rs"
+#
+# [[bin]]
+# name = "bufreader"
+# path = "src/read/buf_reader.rs"
+#
+# [[bin]]
+# name = "memmap2"
+# path = "src/read/mem_map2.rs"
+#
+# [[bin]]
+# name = "direct"
+# path = "src/read/direct.rs"
