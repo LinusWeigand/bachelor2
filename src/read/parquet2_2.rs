@@ -28,22 +28,22 @@ use std::path::PathBuf;
 static ALLOC: dhat::Alloc = dhat::Alloc;
 
 const FILE_PATHS: [&str; 16] = [
-    "merged_01.parquet",
-    "merged_02.parquet",
-    "merged_03.parquet",
-    "merged_04.parquet",
-    "merged_05.parquet",
-    "merged_06.parquet",
-    "merged_07.parquet",
-    "merged_08.parquet",
-    "merged_09.parquet",
-    "merged_10.parquet",
-    "merged_11.parquet",
-    "merged_12.parquet",
-    "merged_13.parquet",
-    "merged_14.parquet",
-    "merged_15.parquet",
-    "merged_16.parquet",
+    "merged_uncomp01.parquet",
+    "merged_uncomp02.parquet",
+    "merged_uncomp03.parquet",
+    "merged_uncomp04.parquet",
+    "merged_uncomp05.parquet",
+    "merged_uncomp06.parquet",
+    "merged_uncomp07.parquet",
+    "merged_uncomp08.parquet",
+    "merged_uncomp09.parquet",
+    "merged_uncomp10.parquet",
+    "merged_uncomp11.parquet",
+    "merged_uncomp12.parquet",
+    "merged_uncomp13.parquet",
+    "merged_uncomp14.parquet",
+    "merged_uncomp15.parquet",
+    "merged_uncomp16.parquet",
 ];
 
 #[derive(Debug)]
@@ -101,7 +101,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     count += 1;
     let file_paths: Vec<_> = (1..count)
-        .map(|i| PathBuf::from(format!("{}/merged_{:02}.parquet", folder, i)))
+        .map(|i| PathBuf::from(format!("{}/merged_uncomp{:02}.parquet", folder, i)))
         .collect();
 
     println!("Loading metadata...");
@@ -158,6 +158,7 @@ async fn make_query(
     let bytes_read = Arc::new(AtomicUsize::new(0));
     let counting_file = CountingReader::new(file, bytes_read.clone());
 
+    // Early Projection
     let mut early_select = select_columns.clone();
     let filter_col_names = get_column_projection_from_expression(&expression);
     for col_name in filter_col_names {
@@ -166,7 +167,7 @@ async fn make_query(
         }
     }
     let num_fields_before = &schema.fields.len();
-    // schema = schema.filter(|_, field| early_select.contains(&field.name));
+    schema = schema.filter(|_, field| early_select.contains(&field.name));
     let num_fields_after = &schema.fields.len();
     println!("Before: {}, After {}", num_fields_before, num_fields_after);
     name_to_index = get_column_name_to_index(&schema);
@@ -197,15 +198,15 @@ async fn make_query(
         batch = arrow2::compute::filter::filter_chunk(&batch, &mask)?;
 
         // Late Projection
-        // if select_columns.len() < schema.fields.len() {
-        //     let selected_indices: Vec<usize> = schema.fields.iter().enumerate().filter_map(|(i, field)| {
-        //
-        //     match select_columns.contains(&field.name) {
-        //         false => None,
-        //         true => Some(i)
-        //     }}).collect();
-        //     batch = filter_columns(&batch, &selected_indices);
-        // }
+        if select_columns.len() < schema.fields.len() {
+            let selected_indices: Vec<usize> = schema.fields.iter().enumerate().filter_map(|(i, field)| {
+
+            match select_columns.contains(&field.name) {
+                false => None,
+                true => Some(i)
+            }}).collect();
+            batch = filter_columns(&batch, &selected_indices);
+        }
 
     }
 
