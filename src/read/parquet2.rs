@@ -125,19 +125,6 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     Ok(())
 }
 
-async fn get_next_item_from_reader(
-    pinned_stream: &mut Pin<&mut ParquetRecordBatchStream<File>>,
-) -> Option<RecordBatch> {
-    match &pinned_stream.as_mut().next().await {
-        Some(Ok(record_batch)) => Some(record_batch.clone()),
-        Some(Err(e)) => {
-            eprintln!("Error: {:?}", e);
-            None
-        }
-        None => None,
-    }
-}
-
 async fn load_files(
     file_paths: Vec<String>,
 ) -> Result<Vec<(String, arrow2::io::parquet::read::FileMetaData)>, Box<dyn Error + Send + Sync>> {
@@ -149,7 +136,7 @@ async fn load_files(
             Ok::<_, Box<dyn Error + Send + Sync>>((path, metadata))
         })
     }))
-    .buffer_unordered(10)
+    .buffer_unordered(FILE_PATHS.len())
     .then(|res| async move { res.unwrap_or_else(|e| Err(Box::new(e) as Box<dyn Error + Send + Sync>)) })
     .try_collect::<Vec<_>>()
     .await?;
