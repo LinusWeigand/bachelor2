@@ -28,22 +28,22 @@ use std::path::PathBuf;
 static ALLOC: dhat::Alloc = dhat::Alloc;
 
 const FILE_PATHS: [&str; 16] = [
-    "merged_uncomp01.parquet",
-    "merged_uncomp02.parquet",
-    "merged_uncomp03.parquet",
-    "merged_uncomp04.parquet",
-    "merged_uncomp05.parquet",
-    "merged_uncomp06.parquet",
-    "merged_uncomp07.parquet",
-    "merged_uncomp08.parquet",
-    "merged_uncomp09.parquet",
-    "merged_uncomp10.parquet",
-    "merged_uncomp11.parquet",
-    "merged_uncomp12.parquet",
-    "merged_uncomp13.parquet",
-    "merged_uncomp14.parquet",
-    "merged_uncomp15.parquet",
-    "merged_uncomp16.parquet",
+    "merged_01.parquet",
+    "merged_02.parquet",
+    "merged_03.parquet",
+    "merged_04.parquet",
+    "merged_05.parquet",
+    "merged_06.parquet",
+    "merged_07.parquet",
+    "merged_08.parquet",
+    "merged_09.parquet",
+    "merged_10.parquet",
+    "merged_11.parquet",
+    "merged_12.parquet",
+    "merged_13.parquet",
+    "merged_14.parquet",
+    "merged_15.parquet",
+    "merged_16.parquet",
 ];
 
 #[derive(Debug)]
@@ -101,7 +101,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     count += 1;
     let file_paths: Vec<_> = (1..count)
-        .map(|i| PathBuf::from(format!("{}/merged_uncomp{:02}.parquet", folder, i)))
+        .map(|i| PathBuf::from(format!("{}/merged_{:02}.parquet", folder, i)))
         .collect();
 
     println!("Loading metadata...");
