@@ -175,7 +175,7 @@ pub fn get_column_projection_from_expression(expression: &Expression) -> Vec<Str
 }
 
 pub fn get_column_name_to_index(schema: &Schema) -> HashMap<String, usize> {
-        schema
+    schema
         .fields
         .iter()
         .enumerate()
@@ -363,12 +363,89 @@ pub fn aggregate_chunks(
     Some(Chunk::new(concatenated_columns))
 }
 
-
-pub fn filter_columns(batch: &Chunk<Box<dyn Array>>, selected_indices: &[usize]) -> Chunk<Box<dyn Array>> {
+pub fn filter_columns(
+    batch: &Chunk<Box<dyn Array>>,
+    selected_indices: &[usize],
+) -> Chunk<Box<dyn Array>> {
     let filtered_columns: Vec<_> = selected_indices
         .iter()
         .filter_map(|&index| batch.columns().get(index).cloned())
         .collect();
 
     Chunk::new(filtered_columns)
+}
+
+pub async fn load_raw_footers(
+    file_paths: Vec<PathBuf>,
+) -> Result<Vec<RawFooter>, Box<dyn Error + Send + Sync>> {
+    let concurrency = file_paths.len();
+
+    let results = futures::stream::iter(file_paths.into_iter().map(|path| {
+        tokio::spawn(async move {
+            let result = spawn_blocking(move || {
+                let mut file = std::fs::File::open(&path)?;
+
+                let file_size = file.seek(SeekFrom::End(0))?;
+                if file_size < 12 {
+                    return Err(format!("File too small to be valid parquet: {:?}", path).into());
+                }
+
+                file.seek(SeekFrom::End(-8))?;
+                let mut trailer = [0u8; 8];
+                file.read_exact(&mut trailer)?;
+
+                let magic = &trailer[4..];
+                if magic != b"PAR1" {
+                    return Err(format!("Invalid Parquet file magic in {:?}", path).into());
+                }
+
+                let metadata_len = u32::from_le_bytes(trailer[0..4].try_into().unwrap());
+                let metadata_len = metadata_len as usize;
+
+                let footer_start = file_size
+                    .checked_sub(8 + metadata_len as u64)
+                    .ok_or_else(|| format!("metadata_len too large in {:?}", path))?;
+                file.seek(SeekFrom::Start(footer_start))?;
+
+                let mut raw_bytes = vec![0u8; metadata_len + 8];
+                file.read_exact(&mut raw_bytes)?;
+
+                Ok(RawFooter {
+                    path,
+                    footer_size: raw_bytes.len(),
+                    raw_bytes,
+                })
+            })
+            .await;
+
+            match result {
+                Ok(inner_res) => inner_res,
+                Err(e) => Err(Box::new(e) as Box<dyn Error + Send + Sync>),
+            }
+        })
+    }))
+    .buffer_unordered(concurrency)
+    .then(|res| async move {
+        match res {
+            Ok(task_res) => task_res,
+            Err(e) => Err(Box::new(e) as Box<dyn Error + Send + Sync>),
+        }
+    })
+    .try_collect::<Vec<_>>()
+    .await?;
+
+    Ok(results)
+}
+
+pub fn parse_raw_footer(
+    raw_bytes: &[u8],
+    max_size: usize,
+) -> Result<parquet2::metadata::FileMetaData, Box<dyn Error + Send + Sync>> {
+    if raw_bytes.len() < 8 || &raw_bytes[raw_bytes.len() - 4..] != b"PAR1" {
+        return Err("Not a valid parquet footer".into());
+    }
+
+    let slice_without_magic = &raw_bytes[..raw_bytes.len() - 4];
+    let file_meta = deserialize_metadata(slice_without_magic, max_size)?;
+    Ok(file_meta)
 }

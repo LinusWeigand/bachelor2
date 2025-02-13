@@ -1,20 +1,15 @@
 use std::{
-    collections::HashMap,
-    env,
-    error::Error,
-    process::exit,
-    sync::{atomic::AtomicUsize, Arc},
+    collections::HashMap, env, error::Error, io::{Read, Seek, SeekFrom}, path::PathBuf, process::exit, sync::{atomic::AtomicUsize, Arc}
 };
 
 use arrow2::io::parquet::read::{infer_schema, read_metadata_async};
 
 use futures::stream::{self, StreamExt, TryStreamExt};
 
+use parquet2::read::deserialize_metadata;
 use query::MetadataItem;
 use tokio::{
-    fs::{read_dir, File},
-    io::{AsyncBufReadExt, BufReader},
-    time::Instant,
+    fs::{read_dir, File}, io::{AsyncBufReadExt, BufReader}, task::spawn_blocking, time::Instant
 };
 use tokio_util::compat::TokioAsyncReadCompatExt;
 const ROWS_PER_GROUP: usize = 2;
@@ -44,6 +39,13 @@ pub enum Workload {
     Half,
     ThreeQuarter,
     Real,
+}
+
+#[derive(Debug)]
+struct RawFooter {
+    path: PathBuf,
+    footer_size: usize,
+    raw_bytes: Vec<u8>,
 }
 
 #[tokio::main]
@@ -154,48 +156,29 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     println!("Reading Metadata");
 
     let start = Instant::now();
-    let mut paths = Vec::new();
+    let mut file_paths = Vec::new();
     let mut dir = read_dir(folder_path).await?;
     while let Some(entry) = dir.next_entry().await? {
-        if paths.len() >= max_counts {
+        if file_paths.len() >= max_counts {
             break;
         }
         let path = entry.path();
-        paths.push(path);
+        file_paths.push(path);
     }
 
-    let metadata_stream = stream::iter(paths.clone()).map(|path| async move {
-        let file = File::open(&path).await?;
-        let mut buf_reader = BufReader::new(file).compat();
-        let metadata = read_metadata_async(&mut buf_reader).await?;
-        let schema = infer_schema(&metadata)?;
-        let name_to_index = utils::get_column_name_to_index(&schema);
-        let row_groups = metadata.row_groups;
-
-        Ok::<_, Box<dyn Error + Send + Sync>>(MetadataItem {
-            path,
-            schema,
-            row_groups,
-            name_to_index,
-        })
-    });
-
-    let metadata_vec: Vec<MetadataItem> = metadata_stream
-        .buffer_unordered(paths.len())
-        .try_collect()
-        .await?;
+    let raw_footers = utils::load_raw_footers(file_paths).await?;
 
     let duration = start.elapsed();
     println!("Time taken: {:.2?}", duration.as_millis() as f64 / 1000.);
     println!("Starting benchmark...");
     let start = Instant::now();
-    let queries: Vec<_> = metadata_vec
+    let queries: Vec<_> = raw_footers
         .into_iter()
-        .map(|metadata| {
+        .map(|footer| {
             let features = Arc::clone(&features);
             let expression = Arc::clone(&expression);
             tokio::spawn(async move {
-                let result = make_query(metadata, &expression, &features).await;
+                let result = make_query(footer, &expression, &features).await;
                 result
             })
         })
@@ -245,7 +228,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 }
 
 async fn make_query(
-    metadata: MetadataItem,
+    raw_footer: RawFooter,
     expression: &str,
     features: &Vec<Feature>,
 ) -> Result<Arc<AtomicUsize>, Box<dyn Error + Send + Sync>> {
@@ -259,8 +242,21 @@ async fn make_query(
         Some(parse::expression::parse_expression(expression)?)
     };
 
+    let metadata = utils::parse_raw_footer(&raw_footer.raw_bytes, raw_footer.footer_size)?;
+    let schema = infer_schema(&metadata)?;
+    let row_groups = metadata.row_groups;
+    let name_to_index = utils::get_column_name_to_index(&schema);
+    let path = raw_footer.path;
+
+    let metadata_item = MetadataItem {
+        path,
+        schema,
+        row_groups,
+        name_to_index,
+    };
+
     let (_, bytes_read, _) =
-        query::smart_query_parquet(metadata, expression, select_columns, aggregation, features)
+        query::smart_query_parquet(metadata_item, expression, select_columns, aggregation, features)
             .await?;
     Ok(bytes_read)
 }
@@ -280,3 +276,4 @@ async fn prepare_workload() -> Result<HashMap<usize, String>, Box<dyn Error + Se
     }
     Ok(result)
 }
+
