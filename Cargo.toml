@@ -28,9 +28,9 @@ debug = 1
 # name = "main"
 # path = "src/main.rs"
 
-# [[bin]]
-# name = "benchmark"
-# path = "src/benchmark.rs"
+[[bin]]
+name = "benchmark"
+path = "src/benchmark.rs"
 #
 # [[bin]]
 # name = "merge"
