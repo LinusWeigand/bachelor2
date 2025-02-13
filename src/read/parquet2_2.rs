@@ -166,7 +166,7 @@ async fn make_query(
         }
     }
     let num_fields_before = &schema.fields.len();
-    schema = schema.filter(|_, field| early_select.contains(&field.name));
+    // schema = schema.filter(|_, field| early_select.contains(&field.name));
     let num_fields_after = &schema.fields.len();
     println!("Before: {}, After {}", num_fields_before, num_fields_after);
     name_to_index = get_column_name_to_index(&schema);
@@ -197,15 +197,15 @@ async fn make_query(
         batch = arrow2::compute::filter::filter_chunk(&batch, &mask)?;
 
         // Late Projection
-        if select_columns.len() < schema.fields.len() {
-            let selected_indices: Vec<usize> = schema.fields.iter().enumerate().filter_map(|(i, field)| {
-
-            match select_columns.contains(&field.name) {
-                false => None,
-                true => Some(i)
-            }}).collect();
-            batch = filter_columns(&batch, &selected_indices);
-        }
+        // if select_columns.len() < schema.fields.len() {
+        //     let selected_indices: Vec<usize> = schema.fields.iter().enumerate().filter_map(|(i, field)| {
+        //
+        //     match select_columns.contains(&field.name) {
+        //         false => None,
+        //         true => Some(i)
+        //     }}).collect();
+        //     batch = filter_columns(&batch, &selected_indices);
+        // }
 
     }
 
