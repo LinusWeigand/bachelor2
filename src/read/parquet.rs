@@ -95,7 +95,7 @@ async fn main() -> Result<(), Box<dyn Error>>{
     }
 
     let elapsed = start_time.elapsed();
-    let size = 0.858 * FILE_PATHS.len();
+    let size = 0.858 * FILE_PATHS.len() as f64;
     let seconds = elapsed.as_millis() as f64 / 1000.;
     let tp = size / seconds;
     println!("Time: {}", seconds);
