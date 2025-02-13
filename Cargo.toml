@@ -33,9 +33,9 @@ tokio-util = { version = "0.7.13", features = ["compat", "io-util"] }
 name = "benchmark"
 path = "src/benchmark.rs"
 
-# [[bin]]
-# name = "merge"
-# path = "src/metadata/merge.rs"
+[[bin]]
+name = "merge"
+path = "src/metadata/merge.rs"
 #
 # [[bin]]
 # name = "selectivity"
@@ -45,9 +45,9 @@ path = "src/benchmark.rs"
 # name = "metadata"
 # path = "src/metadata/metadata.rs"
 #
-# [[bin]]
-# name = "increase"
-# path = "src/metadata/increase_row_groups.rs"
+[[bin]]
+name = "increase"
+path = "src/metadata/increase_row_groups.rs"
 
 # [[bin]]
 # name = "testing"
