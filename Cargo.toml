@@ -80,6 +80,10 @@ name = "parquet2"
 path = "src/read/parquet2.rs"
 
 [[bin]]
+name = "parquet"
+path = "src/read/parquet.rs"
+
+[[bin]]
 name = "seqread2"
 path = "src/read/seqread2.rs"
 
