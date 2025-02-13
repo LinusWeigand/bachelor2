@@ -122,14 +122,18 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         tasks.push(task);
     }
 
+    let mut bytes_read = 0;
     for t in tasks {
-        t.await??;
+        let bytes = t.await??;
+        bytes_read += bytes.load(std::sync::atomic::Ordering::Relaxed);
     }
 
     let elapsed = start_time.elapsed();
     let size = 0.858 * std::cmp::min(count, FILE_PATHS.len()) as f64;
     let seconds = elapsed.as_millis() as f64 / 1000.;
     let tp = size / seconds;
+    let bytes_read_gb: f64 = bytes_read as f64 / 1000. / 1000. / 1000.;
+    println!("Bytes read: {:?} GB", bytes_read_gb);
     println!("Time: {:.2}s", seconds);
     println!("Throughput: {:02}MB", tp);
 
