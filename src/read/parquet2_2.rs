@@ -172,17 +172,17 @@ async fn make_query(
     // println!("Before: {}, After {}", num_fields_before, num_fields_after);
     // name_to_index = get_column_name_to_index(&schema);
     // Row Group Filter
-    let mut row_groups = row_groups;
-    row_groups = row_groups
-        .into_iter()
-        .filter_map(
-            |md| match keep_row_group(&md, &expression, false) {
-                Ok(false) => None,
-                Ok(true) | _ => Some(md),
-            },
-        )
-        .collect();
-
+    // let mut row_groups = row_groups;
+    // row_groups = row_groups
+    //     .into_iter()
+    //     .filter_map(
+    //         |md| match keep_row_group(&md, &expression, false) {
+    //             Ok(false) => None,
+    //             Ok(true) | _ => Some(md),
+    //         },
+    //     )
+    //     .collect();
+    //
 
     let reader = FileReader::new(
         counting_file,
