@@ -1,4 +1,8 @@
 use arrow2::io::parquet::read::{infer_schema, FileReader};
+use parquet2::statistics::{
+    BinaryStatistics, BooleanStatistics, FixedLenStatistics, PrimitiveStatistics, Statistics,
+};
+use parquet2::metadata::RowGroupMetaData;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
@@ -105,23 +109,6 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         let task =
             tokio::task::spawn(async move {
                 let bytes_read = make_query(raw_footer, read_size).await?;
-                // let parsed_footer = parse_raw_footer(&raw_footer.raw_bytes, raw_footer.footer_size)?;
-                // let file = std::fs::File::open(&raw_footer.path)?;
-                // let schema = infer_schema(&parsed_footer)?;
-                // let row_groups = parsed_footer.row_groups;
-                // let reader = FileReader::new(
-                //     file,
-                //     row_groups,
-                //     schema,
-                //     Some(read_size),
-                //     None,
-                //     None,
-                // );
-                //
-                // for maybe_batch in reader {
-                //     let batch = maybe_batch?;
-                // }
-
                 Ok::<Arc<AtomicUsize>, Box<dyn Error + Send + Sync>>(bytes_read)
             });
         tasks.push(task);
@@ -146,13 +133,12 @@ async fn make_query(
     read_size: usize,
 ) -> Result<Arc<AtomicUsize>, Box<dyn Error + Send + Sync>> {
     // Query
-    // let select_columns = Some(vec!["memoryUsed".to_owned()]);
-    // let expression = "memoryUsed > 16685759632";
-    // let expression = if expression.is_empty() {
-    //     None
-    // } else {
-    //     Some(parse_expression(expression)?)
-    // };
+    let expression = "memoryUsed > 16685759632";
+    let expression = if expression.is_empty() {
+        None
+    } else {
+        Some(parse_expression(expression)?)
+    };
 
     let metadata = parse_raw_footer(&raw_footer.raw_bytes, raw_footer.footer_size)?;
     let schema = infer_schema(&metadata)?;
@@ -165,17 +151,17 @@ async fn make_query(
 
     // Row Group Filter
     let mut row_groups = row_groups;
-    // if let Some(expression) = &expression {
-    //         row_groups = row_groups
-    //             .into_iter()
-    //             .filter_map(
-    //                 |md| match keep_row_group(&md, &None, &expression, false) {
-    //                     Ok(false) => None,
-    //                     Ok(true) | _ => Some(md),
-    //                 },
-    //             )
-    //             .collect();
-    // }
+    if let Some(expression) = &expression {
+            row_groups = row_groups
+                .into_iter()
+                .filter_map(
+                    |md| match keep_row_group(&md, &expression, false) {
+                        Ok(false) => None,
+                        Ok(true) | _ => Some(md),
+                    },
+                )
+                .collect();
+    }
 
     let reader = FileReader::new(
         counting_file,
@@ -489,4 +475,245 @@ impl<R: Seek> Seek for CountingReader<R> {
     fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
         self.inner.seek(pos)
     }
+}
+
+pub fn keep_row_group(
+    row_group_metadata: &RowGroupMetaData,
+    expression: &Expression,
+    not: bool,
+) -> Result<bool, Box<dyn Error + Send + Sync>> {
+    match expression {
+        Expression::Condition(condition) => {
+            if let Some((column_index, column, _)) = row_group_metadata
+                .columns()
+                .iter()
+                .enumerate()
+                .filter_map(|(i, c)| match c.descriptor().path_in_schema.first() {
+                    Some(v) => Some((i, c, v)),
+                    None => None,
+                })
+                .find(|(_, _, column_name)| *column_name == &condition.column_name)
+            {
+                let stats = match column.statistics() {
+                    Some(Ok(v)) => v,
+                    _ => return Ok(true),
+                };
+                let (min_value, max_value) = match get_min_max_threshold(&stats) {
+                    Some((min, max)) => (min, max),
+                    _ => return Ok(true),
+                };
+
+                let mut result = condition.comparison.keep_row_group(
+                    &min_value,
+                    &max_value,
+                    &condition.threshold,
+                    not,
+                );
+
+                return Ok(result);
+            }
+            Ok(true)
+        }
+        Expression::And(left, right) => Ok(match not {
+            true => {
+                keep_row_group(row_group_metadata, left, true)?
+                    || keep_row_group(row_group_metadata, right, true)?
+            }
+            false => {
+                keep_row_group(row_group_metadata, left, false)?
+                    && keep_row_group(row_group_metadata, right, false)?
+            }
+        }),
+        Expression::Or(left, right) => Ok(match not {
+            true => {
+                keep_row_group(row_group_metadata, left, true)?
+                    && keep_row_group(row_group_metadata, right, true)?
+            }
+            false => {
+                keep_row_group(row_group_metadata, left, false)?
+                    || keep_row_group(row_group_metadata, right, false)?
+            }
+        }),
+        Expression::Not(inner) => Ok(keep_row_group(
+            row_group_metadata,
+            inner,
+            !not,
+        )?),
+    }
+}
+pub fn compare<T: Ord>(min: T, max: T, v: T, comparison: &Comparison, not: bool) -> bool {
+    match comparison {
+        Comparison::LessThan => match not {
+            false => min < v,
+            true => max >= v,
+        },
+        Comparison::LessThanOrEqual => match not {
+            false => min <= v,
+            true => max > v,
+        },
+        Comparison::Equal => match not {
+            false => v >= min && v <= max,
+            true => !(v == min && v == max),
+        },
+        Comparison::GreaterThanOrEqual => match not {
+            false => max >= v,
+            true => min < v,
+        },
+        Comparison::GreaterThan => match not {
+            false => max > v,
+            true => min <= v,
+        },
+    }
+}
+
+pub trait Float: Copy + PartialOrd {
+    fn abs(self) -> Self;
+    fn equal(self, other: Self) -> bool;
+}
+
+impl Float for f32 {
+    fn abs(self) -> Self {
+        self.abs()
+    }
+    fn equal(self, other: Self) -> bool {
+        (self - other).abs() < f32::EPSILON
+    }
+}
+
+impl Float for f64 {
+    fn abs(self) -> Self {
+        self.abs()
+    }
+    fn equal(self, other: Self) -> bool {
+        (self - other).abs() < f64::EPSILON
+    }
+}
+
+pub fn compare_floats<T: Float>(
+    min: T,
+    max: T,
+    v: T,
+    comparison: &Comparison,
+    not: bool,
+) -> bool {
+    match comparison {
+        Comparison::LessThan => match not {
+            false => min < v,
+            true => max >= v,
+        },
+        Comparison::LessThanOrEqual => match not {
+            false => min <= v,
+            true => max > v,
+        },
+        Comparison::Equal => match not {
+            false => v >= min && v <= max,
+            true => !(v.equal(min) && v.equal(max)),
+        },
+        Comparison::GreaterThanOrEqual => match not {
+            false => max >= v,
+            true => min < v,
+        },
+        Comparison::GreaterThan => match not {
+            false => max > v,
+            true => min <= v,
+        },
+    }
+}
+
+impl Comparison {
+    pub fn keep_row_group(
+        &self,
+        row_group_min: &ThresholdValue,
+        row_group_max: &ThresholdValue,
+        user_threshold: &ThresholdValue,
+        not: bool,
+    ) -> bool {
+        match (row_group_min, row_group_max, user_threshold) {
+            (ThresholdValue::Int64(min), ThresholdValue::Int64(max), ThresholdValue::Int64(v)) => {
+                compare(min, max, v, self, not)
+            }
+            (
+                ThresholdValue::Float64(min),
+                ThresholdValue::Float64(max),
+                ThresholdValue::Float64(v),
+            ) => compare_floats(*min, *max, *v, self, not),
+            (
+                ThresholdValue::Boolean(min),
+                ThresholdValue::Boolean(max),
+                ThresholdValue::Boolean(v),
+            ) => match self {
+                Comparison::LessThan => true,
+                Comparison::LessThanOrEqual => true,
+                Comparison::Equal => match not {
+                    false => v == min || v == max,
+                    true => !(v == min && v == max),
+                },
+                Comparison::GreaterThanOrEqual => true,
+                Comparison::GreaterThan => true,
+            },
+            (
+                ThresholdValue::Utf8String(min),
+                ThresholdValue::Utf8String(max),
+                ThresholdValue::Utf8String(v),
+            ) => compare(min, max, v, self, not),
+            _ => true,
+        }
+    }
+}
+
+pub fn get_min_max_threshold(
+    stats: &Arc<dyn Statistics>,
+) -> Option<(ThresholdValue, ThresholdValue)> {
+    if let Some(typed_stats) = stats.as_any().downcast_ref::<BinaryStatistics>() {
+        let min_str = String::from_utf8(typed_stats.min_value.clone()?).ok()?;
+        let max_str = String::from_utf8(typed_stats.max_value.clone()?).ok()?;
+        return Some((
+            ThresholdValue::Utf8String(min_str),
+            ThresholdValue::Utf8String(max_str),
+        ));
+    }
+
+    if let Some(typed_stats) = stats.as_any().downcast_ref::<BooleanStatistics>() {
+        return Some((
+            ThresholdValue::Boolean(typed_stats.min_value?),
+            ThresholdValue::Boolean(typed_stats.max_value?),
+        ));
+    }
+
+    if let Some(typed_stats) = stats.as_any().downcast_ref::<FixedLenStatistics>() {
+        let min_str = String::from_utf8(typed_stats.min_value.clone()?).ok()?;
+        let max_str = String::from_utf8(typed_stats.max_value.clone()?).ok()?;
+        return Some((
+            ThresholdValue::Utf8String(min_str),
+            ThresholdValue::Utf8String(max_str),
+        ));
+    }
+
+    if let Some(typed_stats) = stats.as_any().downcast_ref::<PrimitiveStatistics<i64>>() {
+        return Some((
+            ThresholdValue::Int64(typed_stats.min_value?),
+            ThresholdValue::Int64(typed_stats.max_value?),
+        ));
+    }
+    if let Some(typed_stats) = stats.as_any().downcast_ref::<PrimitiveStatistics<i32>>() {
+        return Some((
+            ThresholdValue::Int64(typed_stats.min_value? as i64),
+            ThresholdValue::Int64(typed_stats.max_value? as i64),
+        ));
+    }
+    if let Some(typed_stats) = stats.as_any().downcast_ref::<PrimitiveStatistics<f32>>() {
+        return Some((
+            ThresholdValue::Float64(typed_stats.min_value? as f64),
+            ThresholdValue::Float64(typed_stats.max_value? as f64),
+        ));
+    }
+    if let Some(typed_stats) = stats.as_any().downcast_ref::<PrimitiveStatistics<f64>>() {
+        return Some((
+            ThresholdValue::Float64(typed_stats.min_value?),
+            ThresholdValue::Float64(typed_stats.max_value?),
+        ));
+    }
+    println!("No Downcast :(");
+
+    None
 }
