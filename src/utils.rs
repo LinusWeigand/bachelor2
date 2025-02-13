@@ -1,7 +1,13 @@
 use std::io::{self, Read, Seek, SeekFrom};
+use futures::StreamExt;
+use futures::TryStreamExt;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::{collections::HashMap, error::Error};
+use parquet2::read::deserialize_metadata;
+use std::path::PathBuf;
+use tokio::task::spawn_blocking;
+
 
 use crate::aggregation::{Aggregation, Aggregator};
 use arrow2::array::Array;
@@ -20,6 +26,13 @@ pub struct Condition {
     pub column_name: String,
     pub threshold: ThresholdValue,
     pub comparison: Comparison,
+}
+
+#[derive(Debug)]
+pub struct RawFooter {
+    pub path: PathBuf,
+    pub footer_size: usize,
+    pub raw_bytes: Vec<u8>,
 }
 
 #[derive(Clone, Debug)]

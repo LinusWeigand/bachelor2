@@ -1,17 +1,13 @@
 use std::{
-    collections::HashMap, env, error::Error, io::{Read, Seek, SeekFrom}, path::PathBuf, process::exit, sync::{atomic::AtomicUsize, Arc}
+    collections::HashMap, env, error::Error, process::exit, sync::{atomic::AtomicUsize, Arc}
 };
 
-use arrow2::io::parquet::read::{infer_schema, read_metadata_async};
+use arrow2::io::parquet::read::{infer_schema};
 
-use futures::stream::{self, StreamExt, TryStreamExt};
-
-use parquet2::read::deserialize_metadata;
 use query::MetadataItem;
 use tokio::{
-    fs::{read_dir, File}, io::{AsyncBufReadExt, BufReader}, task::spawn_blocking, time::Instant
+    fs::{read_dir, File}, io::{AsyncBufReadExt, BufReader}, time::Instant
 };
-use tokio_util::compat::TokioAsyncReadCompatExt;
 const ROWS_PER_GROUP: usize = 2;
 
 pub mod aggregation;
@@ -41,12 +37,7 @@ pub enum Workload {
     Real,
 }
 
-#[derive(Debug)]
-struct RawFooter {
-    path: PathBuf,
-    footer_size: usize,
-    raw_bytes: Vec<u8>,
-}
+
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
@@ -228,7 +219,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 }
 
 async fn make_query(
-    raw_footer: RawFooter,
+    raw_footer: utils::RawFooter,
     expression: &str,
     features: &Vec<Feature>,
 ) -> Result<Arc<AtomicUsize>, Box<dyn Error + Send + Sync>> {
