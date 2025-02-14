@@ -146,7 +146,7 @@ async fn make_query(
     read_size: usize,
 ) -> Result<Arc<AtomicUsize>, Box<dyn Error + Send + Sync>> {
     // Query
-    let expression = parse_expression("memoryUsed > 97525233984")?;
+    let expression = parse_expression("memoryUsed > 16685759632")?;
     let aggregation_str = vec!["SUM(Age)", "AVG(Age)", "MIN(Age)", "MAX(Age)", "COUNT(Age)", "SUM(Float)", "AVG(Float)", "MIN(Float)", "MAX(Float)", "COUNT(Float)"];
     let mut aggregations = Vec::new();
     for a in aggregation_str {
