@@ -1,11 +1,12 @@
 use arrow2::io::parquet::read::{infer_schema, FileReader};
+use arrow2::types::NativeType;
 use arrow2::{
     array::{
         Array, BooleanArray, Float16Array, PrimitiveArray, Utf8Array
     }, chunk::Chunk, compute::{cast::CastOptions, comparison::{boolean, primitive, utf8}}, datatypes::DataType, error::Error as ArrowError
 };
 use arrow2::compute;
-use std::{collections::HashMap, error::Error};
+use std::{collections::HashMap, error::Error, marker::PhantomData, cmp::{max, min}};
 use arrow2::datatypes::Schema;
 use parquet2::statistics::{
     BinaryStatistics, BooleanStatistics, FixedLenStatistics, PrimitiveStatistics, Statistics,
@@ -146,6 +147,13 @@ async fn make_query(
 ) -> Result<Arc<AtomicUsize>, Box<dyn Error + Send + Sync>> {
     // Query
     let expression = parse_expression("memoryUsed > 97525233984")?;
+    let aggregation_str = vec!["SUM(Age)", "AVG(Age)", "MIN(Age)", "MAX(Age)", "COUNT(Age)", "SUM(Float)", "AVG(Float)", "MIN(Float)", "MAX(Float)", "COUNT(Float)"];
+    let mut aggregations = Vec::new();
+    for a in aggregation_str {
+        let aggregation = parse_aggregation(a)?;
+        aggregations.push(aggregation);
+    }
+
     let select_columns = vec!["memoryUsed".to_owned()];
 
     let metadata = parse_raw_footer(&raw_footer.raw_bytes, raw_footer.footer_size)?;
@@ -159,30 +167,63 @@ async fn make_query(
     let counting_file = CountingReader::new(file, bytes_read.clone());
 
     // Early Projection
-    // let mut early_select = select_columns.clone();
-    // let filter_col_names = get_column_projection_from_expression(&expression);
-    // for col_name in filter_col_names {
-    //     if !early_select.contains(&col_name) {
-    //         early_select.push(col_name);
-    //     }
-    // }
-    // let num_fields_before = &schema.fields.len();
-    // schema = schema.filter(|_, field| early_select.contains(&field.name));
-    // let num_fields_after = &schema.fields.len();
-    // println!("Before: {}, After {}", num_fields_before, num_fields_after);
-    // name_to_index = get_column_name_to_index(&schema);
+    let mut early_select = select_columns.clone();
+    let filter_col_names = get_column_projection_from_expression(&expression);
+    for col_name in filter_col_names {
+        if !early_select.contains(&col_name) {
+            early_select.push(col_name);
+        }
+    }
+    let aggr_col_names = get_column_projection_from_aggregations(&aggregations);
+    for col_name in aggr_col_names {
+        if !early_select.contains(&col_name) {
+            early_select.push(col_name);
+        }
+    }
+    let num_fields_before = &schema.fields.len();
+    schema = schema.filter(|_, field| early_select.contains(&field.name));
+    let num_fields_after = &schema.fields.len();
+    println!("Before: {}, After {}", num_fields_before, num_fields_after);
+    name_to_index = get_column_name_to_index(&schema);
     // Row Group Filter
-    // let mut row_groups = row_groups;
-    // row_groups = row_groups
-    //     .into_iter()
-    //     .filter_map(
-    //         |md| match keep_row_group(&md, &expression, false) {
-    //             Ok(false) => None,
-    //             Ok(true) | _ => Some(md),
-    //         },
-    //     )
-    //     .collect();
-    //
+    let mut row_groups = row_groups;
+    row_groups = row_groups
+        .into_iter()
+        .filter_map(
+            |md| match keep_row_group(&md, &expression, false) {
+                Ok(false) => None,
+                Ok(true) | _ => Some(md),
+            },
+        )
+        .collect();
+
+    // Aggregation
+    let mut aggregators = Vec::new();
+    for aggregation in aggregations {
+        let column_name = aggregation.column_name.clone();
+        let aggregation_op = aggregation.aggregation_op.clone();
+
+        let column = match schema
+            .fields
+            .iter()
+            .find(|field| field.name == column_name)
+        {
+            Some(v) => v,
+            None => continue,
+        };
+
+        let column_index = match name_to_index.get(&column_name) {
+            Some(v) => *v,
+            None => continue,
+        };
+        let data_type = column.data_type();
+        aggregators.push(build_aggregator(
+            column_index,
+            column_name,
+            aggregation_op,
+            data_type,
+        ));
+    }
 
     let reader = FileReader::new(
         counting_file,
@@ -194,19 +235,21 @@ async fn make_query(
     );
     for maybe_batch in reader {
         let mut batch = maybe_batch?;
-        // let mask = build_filter_mask(&batch, &expression, &name_to_index)?;
-        // batch = arrow2::compute::filter::filter_chunk(&batch, &mask)?;
+        let mask = build_filter_mask(&batch, &expression, &name_to_index)?;
+        batch = arrow2::compute::filter::filter_chunk(&batch, &mask)?;
+
+        aggregate_batch(&mut aggregators, &batch)?;
 
         // Late Projection
-        // if select_columns.len() < schema.fields.len() {
-        //     let selected_indices: Vec<usize> = schema.fields.iter().enumerate().filter_map(|(i, field)| {
-        //
-        //     match select_columns.contains(&field.name) {
-        //         false => None,
-        //         true => Some(i)
-        //     }}).collect();
-        //     batch = filter_columns(&batch, &selected_indices);
-        // }
+        if select_columns.len() < schema.fields.len() {
+            let selected_indices: Vec<usize> = schema.fields.iter().enumerate().filter_map(|(i, field)| {
+
+            match select_columns.contains(&field.name) {
+                false => None,
+                true => Some(i)
+            }}).collect();
+            batch = filter_columns(&batch, &selected_indices);
+        }
 
     }
 
@@ -1111,3 +1154,496 @@ pub fn filter_columns(
 
     Chunk::new(filtered_columns)
 }
+
+pub fn parse_aggregation(input: &str) -> Result<Aggregation, Box<dyn Error + Send + Sync>> {
+    let tokens = tokenize(input)?;
+    let aggregation_op = match tokens[0].as_str() {
+        "SUM" => AggregationOp::SUM,
+        "AVG" => AggregationOp::AVG,
+        "COUNT" => AggregationOp::COUNT,
+        "MIN" => AggregationOp::MIN,
+        "MAX" => AggregationOp::MAX,
+        _ => {
+            return Err(format!("Invalid Operation: {}", tokens[0]).into());
+        }
+    };
+
+    if tokens[1] != "(" || tokens[3] != ")" {
+        return Err("Expected format: SUM(column_name)".into());
+    }
+
+    let column_name = (&tokens[2]).to_owned();
+
+    Ok(Aggregation {
+        column_name,
+        aggregation_op,
+    })
+}
+
+#[derive(Debug, Clone)]
+pub enum ScalarValue {
+    Null,
+    Int64(i64),
+    UInt64(u64),
+    Float64(f64),
+    Boolean(bool),
+    String(String),
+    USize(usize),
+    Date(NaiveDateTime),
+}
+
+pub trait Aggregator: Send + Sync {
+    fn aggregate_batch(&mut self, batch: &Chunk<Box<dyn Array>>) -> Result<(), ArrowError>;
+    fn get_result(&self) -> ScalarValue;
+    fn get_name(&self) -> String;
+}
+
+#[derive(PartialEq, Clone, Debug)]
+pub enum AggregationOp {
+    SUM,
+    AVG,
+    COUNT,
+    MIN,
+    MAX,
+}
+
+#[derive(Debug, Clone)]
+pub struct Aggregation {
+    pub column_name: String,
+    pub aggregation_op: AggregationOp,
+}
+
+impl std::fmt::Display for AggregationOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                AggregationOp::SUM => "SUM",
+                AggregationOp::AVG => "AVG",
+                AggregationOp::COUNT => "COUNT",
+                AggregationOp::MIN => "MIN",
+                AggregationOp::MAX => "MAX",
+            }
+        )
+    }
+}
+
+pub fn build_aggregator(
+    column_index: usize,
+    column_name: String,
+    aggregation_op: AggregationOp,
+    data_type: &DataType,
+) -> Option<Box<dyn Aggregator>> {
+    let aggregation_op = aggregation_op.clone();
+    match data_type {
+        DataType::Int8 => Some(Box::new(IntegerAggregator::<i8>::new(
+            column_index,
+            column_name,
+            aggregation_op,
+        ))),
+        DataType::Int16 => Some(Box::new(IntegerAggregator::<i16>::new(
+            column_index,
+            column_name,
+            aggregation_op,
+        ))),
+        DataType::Int32 => Some(Box::new(IntegerAggregator::<i32>::new(
+            column_index,
+            column_name,
+            aggregation_op,
+        ))),
+        DataType::Int64 => Some(Box::new(IntegerAggregator::<i64>::new(
+            column_index,
+            column_name,
+            aggregation_op,
+        ))),
+        DataType::UInt8 => Some(Box::new(UIntegerAggregator::<u8>::new(
+            column_index,
+            column_name,
+            aggregation_op,
+        ))),
+        DataType::UInt16 => Some(Box::new(UIntegerAggregator::<u16>::new(
+            column_index,
+            column_name,
+            aggregation_op,
+        ))),
+        DataType::UInt32 => Some(Box::new(UIntegerAggregator::<u32>::new(
+            column_index,
+            column_name,
+            aggregation_op,
+        ))),
+        DataType::UInt64 => Some(Box::new(UIntegerAggregator::<u64>::new(
+            column_index,
+            column_name,
+            aggregation_op,
+        ))),
+        DataType::Float32 => Some(Box::new(FloatAggregator::<f32>::new(
+            column_index,
+            column_name,
+            aggregation_op,
+        ))),
+        DataType::Float64 => Some(Box::new(FloatAggregator::<f64>::new(
+            column_index,
+            column_name,
+            aggregation_op,
+        ))),
+        _ => None,
+    }
+}
+
+pub struct IntegerAggregator<T> {
+    column_index: usize,
+    column_name: String,
+    aggregation_op: AggregationOp,
+    sum: i64,
+    count: usize,
+    min: i64,
+    max: i64,
+
+    // marker for compiler that we need T but not at runtime
+    phantom: PhantomData<fn() -> T>,
+}
+
+pub struct UIntegerAggregator<T> {
+    column_index: usize,
+    column_name: String,
+    aggregation_op: AggregationOp,
+    sum: u64,
+    count: usize,
+    min: u64,
+    max: u64,
+
+    // marker for compiler that we need T but not at runtime
+    phantom: PhantomData<fn() -> T>,
+}
+
+pub struct FloatAggregator<T> {
+    column_index: usize,
+    column_name: String,
+    aggregation_op: AggregationOp,
+    sum: f64,
+    count: usize,
+    min: f64,
+    max: f64,
+
+    phantom: PhantomData<fn() -> T>,
+}
+
+impl<T> IntegerAggregator<T>
+where
+    T: NativeType + Into<i64>,
+{
+    pub fn new(column_index: usize, column_name: String, aggregation_op: AggregationOp) -> Self {
+        Self {
+            column_index,
+            column_name,
+            aggregation_op,
+            sum: 0,
+            count: 0,
+            min: i64::MAX,
+            max: i64::MIN,
+            phantom: PhantomData,
+        }
+    }
+
+    fn process_value(&mut self, v: i64) {
+        match self.aggregation_op {
+            AggregationOp::SUM | AggregationOp::AVG => {
+                self.sum += v;
+                self.count += 1;
+            }
+            AggregationOp::COUNT => {
+                self.count += 1;
+            }
+            AggregationOp::MIN => {
+                self.min = min(self.min, v);
+                self.count += 1;
+            }
+            AggregationOp::MAX => {
+                self.max = max(self.max, v);
+                self.count += 1;
+            }
+        }
+    }
+}
+
+impl<T> UIntegerAggregator<T>
+where
+    T: NativeType + Into<u64>,
+{
+    pub fn new(column_index: usize, column_name: String, aggregation_op: AggregationOp) -> Self {
+        Self {
+            column_index,
+            column_name,
+            aggregation_op,
+            sum: 0,
+            count: 0,
+            min: u64::MAX,
+            max: u64::MIN,
+            phantom: PhantomData,
+        }
+    }
+
+    fn process_value(&mut self, v: u64) {
+        match self.aggregation_op {
+            AggregationOp::SUM | AggregationOp::AVG => {
+                self.sum += v;
+                self.count += 1;
+            }
+            AggregationOp::COUNT => {
+                self.count += 1;
+            }
+            AggregationOp::MIN => {
+                self.min = min(self.min, v);
+                self.count += 1;
+            }
+            AggregationOp::MAX => {
+                self.max = max(self.max, v);
+                self.count += 1;
+            }
+        }
+    }
+}
+
+impl<T> FloatAggregator<T>
+where
+    T: NativeType + Into<f64>,
+{
+    pub fn new(column_index: usize, column_name: String, aggregation_op: AggregationOp) -> Self {
+        Self {
+            column_index,
+            column_name,
+            aggregation_op,
+            sum: 0.,
+            count: 0,
+            min: f64::MAX,
+            max: f64::MIN,
+            phantom: PhantomData,
+        }
+    }
+
+    pub fn process_value(&mut self, v: f64) {
+        match self.aggregation_op {
+            AggregationOp::SUM | AggregationOp::AVG => {
+                self.sum += v;
+                self.count += 1;
+            }
+            AggregationOp::COUNT => {
+                self.count += 1;
+            }
+            AggregationOp::MIN => {
+                self.min = self.min.min(v);
+                self.count += 1;
+            }
+            AggregationOp::MAX => {
+                self.max = self.max.max(v);
+                self.count += 1;
+            }
+        }
+    }
+}
+
+impl<T> Aggregator for IntegerAggregator<T>
+where
+    T: NativeType + Into<i64>,
+{
+    fn aggregate_batch(&mut self, batch: &Chunk<Box<dyn Array>>) -> Result<(), ArrowError> {
+        let column = batch.columns().get(self.column_index).ok_or_else(|| {
+            ArrowError::InvalidArgumentError(format!(
+                "Column index {} out of bounds",
+                self.column_index
+            ))
+        })?;
+        let array = column
+            .as_any()
+            .downcast_ref::<PrimitiveArray<T>>()
+            .ok_or_else(|| {
+                ArrowError::InvalidArgumentError(format!(
+                    "Downcast to PrimitiveArray<{}> failed!",
+                    std::any::type_name::<T>()
+                ))
+            })?;
+
+        for val in array.iter().flatten() {
+            let value: i64 = (*val).into();
+            self.process_value(value);
+        }
+        Ok(())
+    }
+
+    fn get_result(&self) -> ScalarValue {
+        match self.aggregation_op {
+            AggregationOp::SUM => ScalarValue::Int64(self.sum),
+            AggregationOp::AVG => {
+                if self.count == 0 {
+                    ScalarValue::Null
+                } else {
+                    ScalarValue::Float64(self.sum as f64 / self.count as f64)
+                }
+            }
+            AggregationOp::COUNT => ScalarValue::USize(self.count),
+            AggregationOp::MIN => {
+                if self.count == 0 {
+                    ScalarValue::Null
+                } else {
+                    ScalarValue::Int64(self.min)
+                }
+            }
+            AggregationOp::MAX => {
+                if self.count == 0 {
+                    ScalarValue::Null
+                } else {
+                    ScalarValue::Int64(self.max)
+                }
+            }
+        }
+    }
+
+    fn get_name(&self) -> String {
+        format!("{}({})", self.aggregation_op.to_string(), self.column_name)
+    }
+}
+
+impl<T> Aggregator for UIntegerAggregator<T>
+where
+    T: NativeType + Into<u64>,
+{
+    fn aggregate_batch(&mut self, batch: &Chunk<Box<dyn Array>>) -> Result<(), ArrowError> {
+        let column = batch.columns().get(self.column_index).ok_or_else(|| {
+            ArrowError::InvalidArgumentError(format!(
+                "Column index {} out of bounds",
+                self.column_index
+            ))
+        })?;
+        let array = column
+            .as_any()
+            .downcast_ref::<PrimitiveArray<T>>()
+            .ok_or_else(|| {
+                ArrowError::InvalidArgumentError(format!(
+                    "Downcast to PrimitiveArray<{}> failed!",
+                    std::any::type_name::<T>()
+                ))
+            })?;
+
+        for val in array.iter().flatten() {
+            let value: u64 = (*val).into();
+            self.process_value(value);
+        }
+        Ok(())
+    }
+
+    fn get_result(&self) -> ScalarValue {
+        match self.aggregation_op {
+            AggregationOp::SUM => ScalarValue::UInt64(self.sum),
+            AggregationOp::AVG => {
+                if self.count == 0 {
+                    ScalarValue::Null
+                } else {
+                    ScalarValue::Float64(self.sum as f64 / self.count as f64)
+                }
+            }
+            AggregationOp::COUNT => ScalarValue::USize(self.count),
+            AggregationOp::MIN => {
+                if self.count == 0 {
+                    ScalarValue::Null
+                } else {
+                    ScalarValue::UInt64(self.min)
+                }
+            }
+            AggregationOp::MAX => {
+                if self.count == 0 {
+                    ScalarValue::Null
+                } else {
+                    ScalarValue::UInt64(self.max)
+                }
+            }
+        }
+    }
+
+    fn get_name(&self) -> String {
+        format!("{}({})", self.aggregation_op.to_string(), self.column_name)
+    }
+}
+
+impl<T> Aggregator for FloatAggregator<T>
+where
+    T: NativeType + Into<f64>,
+{
+    fn aggregate_batch(&mut self, batch: &Chunk<Box<dyn Array>>) -> Result<(), ArrowError> {
+        let column = batch.columns().get(self.column_index).ok_or_else(|| {
+            ArrowError::InvalidArgumentError(format!(
+                "Column index {} out of bounds",
+                self.column_index
+            ))
+        })?;
+        let array = column
+            .as_any()
+            .downcast_ref::<PrimitiveArray<T>>()
+            .ok_or_else(|| {
+                ArrowError::InvalidArgumentError(format!(
+                    "Downcast to PrimitiveArray<{}> failed!",
+                    std::any::type_name::<T>()
+                ))
+            })?;
+
+        for val in array.iter().flatten() {
+            self.process_value((*val).into());
+        }
+        Ok(())
+    }
+    fn get_result(&self) -> ScalarValue {
+        match self.aggregation_op {
+            AggregationOp::SUM => ScalarValue::Float64(self.sum),
+            AggregationOp::AVG => {
+                if self.count == 0 {
+                    ScalarValue::Null
+                } else {
+                    ScalarValue::Float64(self.sum / self.count as f64)
+                }
+            }
+            AggregationOp::COUNT => ScalarValue::USize(self.count),
+            AggregationOp::MIN => {
+                if self.count > 0 {
+                    ScalarValue::Float64(self.min)
+                } else {
+                    ScalarValue::Null
+                }
+            }
+            AggregationOp::MAX => {
+                if self.count > 0 {
+                    ScalarValue::Float64(self.max)
+                } else {
+                    ScalarValue::Null
+                }
+            }
+        }
+    }
+
+    fn get_name(&self) -> String {
+        format!("{}({})", self.aggregation_op.to_string(), self.column_name)
+    }
+}
+
+pub fn get_column_projection_from_aggregations(aggregations: &Vec<Aggregation>) -> Vec<String> {
+    let mut result: Vec<String> = Vec::new();
+    for aggregation in aggregations {
+        let col_name = &aggregation.column_name;
+        if !result.contains(&col_name) {
+            result.push(col_name.to_owned());
+        }
+    }
+    result
+}
+
+pub fn aggregate_batch(
+    aggregators: &mut Vec<Option<Box<dyn Aggregator>>>,
+    batch: &Chunk<Box<dyn Array>>,
+) -> Result<(), ArrowError> {
+    for aggregator in aggregators {
+        if let Some(aggregator) = aggregator {
+            aggregator.aggregate_batch(batch)?;
+        }
+    }
+    Ok(())
+}
+
